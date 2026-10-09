@@ -1,0 +1,15 @@
+{
+  "locator_id": 4559325,
+  "scenario_id": "21390639",
+  "base_task_id": 3628129900001021,
+  "feat_task_id": 3628135100001024,
+  "diff_type": "P2F",
+  "metrics": [
+    "dpe_collision"
+  ],
+  "locator_url": "http://10.190.55.60:8000/pages/crlocator.html?id=4559325",
+  "diff_url": "https://voyager.intra.xiaojukeji.com/static/management/#/simulation/review?reviewType=taskDiff&taskIds=3628129900001021,3628135100001024&selectedMetrics=dpe_collision",
+  "comment": "疑似全撞",
+  "scene_invalid": "其他（备注）",
+  "annotations": []
+}

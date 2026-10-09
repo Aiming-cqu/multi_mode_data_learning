@@ -1,0 +1,143 @@
+{
+	"hooks": {
+		"agentStop": [
+			{
+				"bash": "~/.agents/hooks/scripts/notify-dchat.sh agentStop",
+				"timeoutSec": 30,
+				"type": "command"
+			}
+		],
+		"errorOccurred": [
+			{
+				"bash": "~/.agents/hooks/scripts/notify-dchat.sh errorOccurred",
+				"timeoutSec": 30,
+				"type": "command"
+			}
+		],
+		"ErrorOccurred": [
+			{
+				"bash": "~/.agents/hooks/scripts/notify-dchat.sh ErrorOccurred",
+				"timeoutSec": 30,
+				"type": "command"
+			}
+		],
+		"notification": [
+			{
+				"bash": "~/.agents/hooks/scripts/notify-dchat.sh notification",
+				"timeoutSec": 30,
+				"type": "command"
+			}
+		],
+		"permissionRequest": [],
+		"postToolUse": [],
+		"PostToolUse": [],
+		"postToolUseFailure": [
+			{
+				"bash": "~/.agents/hooks/scripts/notify-dchat.sh postToolUseFailure",
+				"timeoutSec": 30,
+				"type": "command"
+			}
+		],
+		"PostToolUseFailure": [
+			{
+				"bash": "~/.agents/hooks/scripts/notify-dchat.sh PostToolUseFailure",
+				"timeoutSec": 30,
+				"type": "command"
+			}
+		],
+		"preCompact": [
+			{
+				"bash": "~/.agents/hooks/scripts/notify-dchat.sh preCompact",
+				"timeoutSec": 30,
+				"type": "command"
+			}
+		],
+		"PreCompact": [
+			{
+				"bash": "~/.agents/hooks/scripts/notify-dchat.sh PreCompact",
+				"timeoutSec": 30,
+				"type": "command"
+			}
+		],
+		"preToolUse": [
+			{
+				"bash": "~/.agents/hooks/scripts/pre-tool-policy.copilot.sh",
+				"timeoutSec": 15,
+				"type": "command"
+			}
+		],
+		"PreToolUse": [
+			{
+				"bash": "~/.agents/hooks/scripts/pre-tool-policy.copilot.sh",
+				"timeoutSec": 15,
+				"type": "command"
+			}
+		],
+		"sessionEnd": [
+			{
+				"bash": "~/.agents/hooks/scripts/notify-dchat.sh sessionEnd",
+				"timeoutSec": 30,
+				"type": "command"
+			}
+		],
+		"SessionEnd": [
+			{
+				"bash": "~/.agents/hooks/scripts/notify-dchat.sh SessionEnd",
+				"timeoutSec": 30,
+				"type": "command"
+			}
+		],
+		"sessionStart": [
+			{
+				"bash": "~/.agents/hooks/scripts/notify-dchat.sh sessionStart",
+				"timeoutSec": 30,
+				"type": "command"
+			}
+		],
+		"SessionStart": [
+			{
+				"bash": "~/.agents/hooks/scripts/notify-dchat.sh SessionStart",
+				"timeoutSec": 30,
+				"type": "command"
+			}
+		],
+		"Stop": [
+			{
+				"bash": "~/.agents/hooks/scripts/notify-dchat.sh Stop",
+				"timeoutSec": 30,
+				"type": "command"
+			}
+		],
+		"subagentStart": [
+			{
+				"bash": "~/.agents/hooks/scripts/notify-dchat.sh subagentStart",
+				"timeoutSec": 30,
+				"type": "command"
+			}
+		],
+		"SubagentStart": [
+			{
+				"bash": "~/.agents/hooks/scripts/notify-dchat.sh SubagentStart",
+				"timeoutSec": 30,
+				"type": "command"
+			}
+		],
+		"subagentStop": [
+			{
+				"bash": "~/.agents/hooks/scripts/notify-dchat.sh subagentStop",
+				"timeoutSec": 30,
+				"type": "command"
+			}
+		],
+		"SubagentStop": [
+			{
+				"bash": "~/.agents/hooks/scripts/notify-dchat.sh SubagentStop",
+				"timeoutSec": 30,
+				"type": "command"
+			}
+		],
+		"UserPromptSubmit": [],
+		"userPromptSubmitted": []
+	},
+	"version": 1
+}

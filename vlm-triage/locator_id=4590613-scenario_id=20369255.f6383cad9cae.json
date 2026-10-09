@@ -1,0 +1,48 @@
+{
+  "locator_id": 4590613,
+  "scenario_id": "20369255",
+  "base_task_id": 3628135900000440,
+  "feat_task_id": 3628138500000441,
+  "diff_type": "F2P",
+  "metrics": [
+    "dpe_collision"
+  ],
+  "locator_url": "http://10.190.55.60:8000/pages/crlocator.html?id=4590613",
+  "diff_url": "https://voyager.intra.xiaojukeji.com/static/management/#/simulation/review?reviewType=taskDiff&taskIds=3628135900000440,3628138500000441&selectedMetrics=dpe_collision",
+  "comment": "多拐点",
+  "annotations": [
+    {
+      "cr_index": 3,
+      "cr_desc": "3635353900000068 / 8752059b1ec14200a0a9a7f793bd7b94a0799d40",
+      "window_index": "01",
+      "window_desc": "W01 @ 11846ms",
+      "sample_index": "04",
+      "sample_desc": "S04 @ -10ms",
+      "image_url": "https://s3-nmgpu-inter.didistatic.com/te-ds-autolabeling-dos-1/luonairui/data/visual-cr-locator-api/202604/e45ce719eaa1/locator_id%3D4590613-scenario_id%3D20369255-cr_index%3D03-task_id%3D3635353900000068-commit%3D8752059b1ec14200a0a9a7f793bd7b94a0799d40-window_index%3D01-window_time%3D11846-sample_index%3D04-sample_time%3D11836.jpg?response-content-disposition=inline&response-content-type=image%2Fjpeg&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKDD00000000000ZR6IP2BA7BQEHEG%2F20260415%2Fnmgpu%2Fs3%2Faws4_request&X-Amz-Date=20260415T063736Z&X-Amz-Expires=604800&X-Amz-SignedHeaders=host&X-Amz-Signature=e104dab392cee3a7929da1c8fe0e9d77321d293588ccf9f258f4fde1896e40d7",
+      "diff_type": "F2P",
+      "rank": "关键"
+    },
+    {
+      "cr_index": 11,
+      "cr_desc": "3635606500000004 / a2bbb0d6156a8ba6ae1d20d8bb718ad9c2078ed9",
+      "window_index": "01",
+      "window_desc": "W01 @ 11846ms",
+      "sample_index": "04",
+      "sample_desc": "S04 @ -10ms",
+      "image_url": "https://s3-nmgpu-inter.didistatic.com/te-ds-autolabeling-dos-1/luonairui/data/visual-cr-locator-api/202604/e45ce719eaa1/locator_id%3D4590613-scenario_id%3D20369255-cr_index%3D11-task_id%3D3635606500000004-commit%3Da2bbb0d6156a8ba6ae1d20d8bb718ad9c2078ed9-window_index%3D01-window_time%3D11846-sample_index%3D04-sample_time%3D11836.jpg?response-content-disposition=inline&response-content-type=image%2Fjpeg&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKDD00000000000ZR6IP2BA7BQEHEG%2F20260415%2Fnmgpu%2Fs3%2Faws4_request&X-Amz-Date=20260415T063739Z&X-Amz-Expires=604800&X-Amz-SignedHeaders=host&X-Amz-Signature=94c7f89a3c2c87b51eb6c7956b7e683bf8e1dc87c28aa79a476028fc633bd6ce",
+      "diff_type": "P2F",
+      "rank": "次要"
+    },
+    {
+      "cr_index": 26,
+      "cr_desc": "3667074500000000 / dbbfe8f0bc537624b975aa9ce52347f463929c1e",
+      "window_index": "01",
+      "window_desc": "W01 @ 11846ms",
+      "sample_index": "05",
+      "sample_desc": "S05 @ +490ms",
+      "image_url": "https://s3-nmgpu-inter.didistatic.com/te-ds-autolabeling-dos-1/luonairui/data/visual-cr-locator-api/202604/e45ce719eaa1/locator_id%3D4590613-scenario_id%3D20369255-cr_index%3D26-task_id%3D3667074500000000-commit%3Ddbbfe8f0bc537624b975aa9ce52347f463929c1e-window_index%3D01-window_time%3D11846-sample_index%3D05-sample_time%3D12336.jpg?response-content-disposition=inline&response-content-type=image%2Fjpeg&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKDD00000000000ZR6IP2BA7BQEHEG%2F20260415%2Fnmgpu%2Fs3%2Faws4_request&X-Amz-Date=20260415T063735Z&X-Amz-Expires=604800&X-Amz-SignedHeaders=host&X-Amz-Signature=37481e654b2625cdfc02dd20ea4840a67547ac99f290abbff8fd071fe77c0692",
+      "diff_type": "F2P",
+      "rank": "次要"
+    }
+  ]
+}

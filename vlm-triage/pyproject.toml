@@ -1,0 +1,878 @@
+# pixi install -a workaround for <0.68 could not skip unsupported platforms:
+# pixi workspace environment list | sed -n 's#^- \([A-Za-z_-]*\):#\1#p' | xargs -t -n1 pixi install -e
+
+[project]
+name = "vlm-triage"
+version = "0.2.5"
+authors = [{name = "Nairui Luo", email = "luonairui@didiglobal.com"}]
+description = "VLM Triage"
+readme = "README.md"
+requires-python = ">=3.11"
+
+[project.scripts]
+triage-aurora-scenario-labeling = "vlm_triage.apps.aurora_scenario_labeling.main"
+triage-embedding-api = "vlm_triage.apps.embedding_api.main"
+triage-visual-cr-locator-api = "vlm_triage.apps.visual_cr_locator.api"
+triage-visual-cr-locator-fe = "vlm_triage.apps.visual_cr_locator.fe"
+triage-voyager-proxy = "vlm_triage.apps.voyager_proxy.main"
+
+[dependency-groups]
+# imported from voyager/offboard/py310_requirements_u22.txt, do not update
+voyager = [
+#   "absl-py==1.4.0",
+#   "accumulation-tree==0.6.2",
+#   "aiobotocore==2.1.2",
+#   "aiohttp==3.8.1",
+#   "aioitertools==0.11.0",
+#   "aiosignal==1.3.1",
+#   "alabaster==0.7.16",
+#   "alphashape==1.3.1",
+#   "altair==4.2.2",
+#   "anyio==4.4.0",
+#   "argparse-addons==0.12.0",
+#   "asgiref==3.8.1",
+#   "astral==2.2",
+#   "astroid==2.15.8",
+#   "astunparse==1.6.3",
+#   "async-timeout==4.0.3",
+#   "attrs==20.3.0",
+#   "autograd==1.6.2",
+#   "av==9.0.0",
+#   "babel==2.15.0",
+#   "backports-tarfile==1.2.0",
+#   "bayesian-optimization==1.2.0",
+#   "bcrypt==4.2.0",
+#   "bezier==2023.7.28",
+#   "bitstruct==8.19.0",
+#   "black==22.6",
+#   "blessed==1.20.0",
+#   "blinker==1.9.0",
+#   "bokeh==1.4.0",
+#   "boto3==1.20.24",
+#   "botocore==1.23.24",
+#   "cached-property==1.5.2",
+#   "cachetools==5.4.0",
+#   "cantools==35.5.0",
+#   "catkin-pkg==0.4.12",
+#   "certifi==2024.7.4",
+#   "cffi==1.16.0",
+  "chardet==3.0.4",
+#   "charset-normalizer==2.1.1",
+#   "click==8.1.4",
+#   "click-log==0.4.0",
+#   "cloudpickle==3.0.0",
+#   "collectd==1.0",
+#   "collectd-cuda==0.0.3",
+#   "coloredlogs==15.0.1",
+#   "colorlog==4.6.2",
+#   "concurrent-log-handler==0.9.17",
+#   "configparser==7.0.0",
+#   "control==0.9.2",
+#   "cpplint==1.5.5",
+#   "cramjam==2.8.3",
+#   "croniter==5.0.1",
+#   "cryptography==41.0.7",
+#   "cssselect==1.2.0",
+#   "cssutils==2.11.1",
+#   "cvxpy==1.2.0",
+#   "cxxfilt==0.2.2",
+#   "cycler==0.12.1",
+#   "cython==3.0.10",
+#   "datetime==5.5",
+#   "decorator==5.1.1",
+#   "deepl==1.3.1",
+#   "defusedxml==0.6.0",
+#   "dictdiffer==0.8.1",
+#   "dill==0.3.8",
+#   "diskcache==5.6.3",
+#   "django==3.2.14",
+#   "docopt==0.6.2",
+#   "docutils==0.17.1",
+#   "dracopy==1.1.1",
+#   "earcut==1.1.5",
+#   "ecos==2.0.14",
+#   "elasticsearch==6.8.2",
+#   "elasticsearch-dsl==6.0.0",
+#   "empy==3.3.2",
+#   "enforce==0.3.4",
+#   "entrypoints==0.4",
+#   "et-xmlfile==1.1.0",
+#   "exceptiongroup==1.2.2",
+#   "execnet==2.1.1",
+#   "ezdxf==1.4.2",
+#   "fabric2==2.5.0",
+#   "fabric3==1.14.post1",
+  "fastapi~=0.115",
+#   "fastapi-restful==0.6.0",
+#   "flake8==3.8.4",
+#   "flatbuffers==25.2.10",
+#   "fonttools==4.53.1",
+#   "frozenlist==1.4.1",
+#   "fsspec==2022.1.0",
+#   "future==1.0.0",
+#   "gast==0.4.0",
+#   "gdal==3.4.1",
+#   "geojson==2.5.0",
+#   "gitdb==4.0.11",
+#   "gitpython==3.1.13",
+#   "gnupg==2.3.1",
+#   "google-pasta==0.2.0",
+#   "grpcio==1.59.0",
+#   "grpcio-tools==1.47.0",
+#   "h11==0.14.0",
+#   "h5py==3.14.0",
+#   "hdfs==2.6.0",
+#   "html2text==2024.2.26",
+#   "humanfriendly==10.0",
+  "idna==2.10",
+#   "imagesize==1.4.1",
+#   "importlib-metadata==6.11.0",
+#   "iniconfig==2.0.0",
+#   "inquirer==2.10.1",
+#   "invoke==1.7.3",
+#   "ipython-genutils==0.2.0",
+#   "isort==5.13.2",
+#   "jaraco-classes==3.4.0",
+#   "jaraco-context==5.3.0",
+#   "jaraco-functools==4.0.1",
+#   "jax==0.4.30",
+#   "jaxlib==0.4.30",
+#   "jeepney==0.8.0",
+#   "jinja2==3.0.1",
+#   "jira==3.0.1",
+#   "jmespath==0.10.0",
+#   "joblib==1.4.2",
+#   "jsonpath==0.82",
+#   "jsonschema==3.2.0",
+#   "jupyter-core==5.7.2",
+  "kafka-python==2.0.1",
+#   "keras==3.11.0",
+#   "keyring==25.2.1",
+#   "kiwisolver==1.4.5",
+#   "laspy==2.2.0",
+#   "lazy-object-proxy==1.10.0",
+#   "libclang==18.1.1",
+#   "lightgbm==3.2.1",
+#   "llvmlite==0.43.0",
+#   "lxml==4.9.1",
+#   "lz4==4.3.3",
+#   "mako==1.0.7",
+#   "markdown==3.6",
+#   "markdown-it-py==3.0.0",
+#   "markupsafe==2.1.5",
+#   "matplotlib==3.5.2",
+#   "mccabe==0.6.1",
+#   "mdurl==0.1.2",
+  "minio==6.0.2",
+#   "ml-dtypes==0.5.3",
+#   "ml-metadata==1.15.0",
+#   "mock==5.1.0",
+#   "more-itertools==10.3.0",
+#   "mpmath==1.3.0",
+#   "msgpack==1.0.8",
+#   "multi-key-dict==2.0.3",
+#   "multidict==6.0.5",
+#   "mypy-extensions==1.0.0",
+#   "namex==0.1.0",
+#   "nbformat==5.0.8",
+#   "netifaces==0.11.0",
+#   "networkx==2.8.5",
+#   "numba==0.60.0",
+#   "numexpr==2.10.1",
+#   "numpy==1.26.2",
+#   "oauthlib==3.2.2",
+#   "opencv-python==3.4.16.59",
+#   "openpyxl==3.0.9",
+#   "opt-einsum==3.3.0",
+#   "optree==0.17.0",
+#   "orjson==3.6.1",
+#   "osqp==0.6.7.post1",
+#   "packaging==23.2",
+#   "pandas==1.3.5",
+#   "pandas-bokeh==0.4.3",
+#   "paramiko==2.12.0",
+#   "pathspec==0.12.1",
+#   "pathvalidate==2.5.0",
+#   "pbr==6.1.0",
+#   "pdfkit==0.6.1",
+#   "perfetto==0.3.0",
+#   "pillow==9.5.0",
+#   "pkgconfig==1.5.5",
+#   "platformdirs==4.2.2",
+#   "plotly==5.18.0",
+#   "pluggy==0.13.1",
+#   "portalocker==2.10.1",
+#   "portion==2.4.2",
+#   "premailer==3.10.0",
+#   "presto-python-client==0.8.2",
+#   "prettytable==2.1.0",
+  "protobuf==3.20.3",
+#   "psutil==5.9.8",
+#   "py==1.11.0",
+#   "py-cpuinfo==9.0.0",
+#   "py3dtiles==7.0.0",
+#   "pyarrow==6.0.1",
+#   "pycodestyle==2.6.0",
+#   "pycparser==2.22",
+#   "pycrypto==2.6.1",
+#   "pycryptodome==3.15.0",
+#   "pycryptodomex==3.9.9",
+#   "pycurl==7.43.0.6",
+  "pydantic==1.10.2",
+#   "pydash==8.0.3",
+#   "pydeck==0.9.1",
+#   "pydot==1.4.1",
+#   "pyflakes==2.2.0",
+#   "pyglm==2.5.7",
+#   "pygments==2.18.0",
+#   "pygraphviz==1.6",
+#   "pyhive==0.6.5",
+#   "pylint==2.17.7",
+#   "pylint-per-file-ignores==1.4.0",
+#   "pynacl==1.5.0",
+#   "pyopenssl==23.2.0",
+#   "pyparsing==2.4.7",
+#   "pyproj==3.6.1",
+#   "pyqt5==5.15.2",
+#   "pyqt5-sip==12.15.0",
+#   "pyqtgraph==0.11.1",
+#   "pyrsistent==0.20.0",
+#   "pyside2==5.13.0",
+#   "pytest==6.2.4",
+#   "pytest-asyncio==0.19.0",
+#   "pytest-benchmark==3.4.1",
+#   "pytest-forked==1.6.0",
+#   "pytest-timeout==2.1.0",
+#   "pytest-xdist==2.2.1",
+#   "python-can==4.4.2",
+  "python-dateutil==2.9.0.post0",
+#   "python-editor==1.0.4",
+#   "python-jenkins==1.7.0",
+#   "python-magic==0.4.27",
+#   "python-multipart==0.0.5",
+#   "python-snappy==0.7.2",
+  "pytz==2024.1",
+#   "pytz-deprecation-shim==0.1.0.post0",
+#   "pyudorandom==1.0.0",
+#   "pywavelets==1.3.0",
+#   "pyyaml==6.0.1",
+#   "pyzmq==26.2.0",
+#   "pyzstd==0.15.2",
+#   "qdldl==0.1.7.post4",
+#   "readchar==4.2.0",
+#   "redis==3.5.3",
+  "requests==2.25.0",
+#   "requests-mock==1.11.0",
+#   "requests-oauthlib==2.0.0",
+#   "requests-toolbelt==1.0.0",
+#   "requests-unixsocket==0.3.0",
+#   "retry==0.9.2",
+#   "rich==13.9.4",
+#   "rospkg==1.1.9",
+#   "rrdtool==0.1.16",
+#   "rtree==1.0.0",
+#   "ruptures==1.1.7",
+#   "s3fs==2022.1.0",
+#   "s3transfer==0.5.2",
+#   "scapy==2.6.1",
+#   "scikit-learn==1.1.1",
+#   "scipy==1.11.4",
+#   "scs==3.2.6",
+#   "secretstorage==3.3.3",
+#   "sh==1.14.1",
+#   "shap==0.46.0",
+#   "shapely==1.8.1.post1",
+#   "shiboken2==5.13.0",
+#   "simplejson==3.13.2",
+  "six==1.16.0",
+#   "slicer==0.0.8",
+#   "smmap==5.0.1",
+#   "snakeviz==2.1.1",
+#   "sniffio==1.3.1",
+#   "snowballstemmer==2.2.0",
+#   "sortedcontainers==2.4.0",
+#   "sphinx==5.0.2",
+#   "sphinx-markdown-builder==0.5.5",
+#   "sphinx-rtd-theme==1.0.0",
+#   "sphinxcontrib-applehelp==1.0.8",
+#   "sphinxcontrib-devhelp==1.0.6",
+#   "sphinxcontrib-htmlhelp==2.0.6",
+#   "sphinxcontrib-jsmath==1.0.1",
+#   "sphinxcontrib-qthelp==1.0.8",
+#   "sphinxcontrib-serializinghtml==1.1.10",
+#   "sqlparse==0.5.1",
+  "starlette==0.46.1",
+#   "streamlit==1.27.0",
+#   "streamlit-sortables==0.3.1",
+#   "subprocess-tee==0.3.2",
+#   "sympy==1.10.1",
+#   "tables==3.7.0",
+#   "tblib==2.0.0",
+#   "tdigest==0.5.2.2",
+  "tenacity==8.5.0",
+#   "tensorboard==2.19.0",
+#   "tensorboard-data-server==0.7.2",
+#   "tensorflow==2.19.0",
+#   "tensorflow-io-gcs-filesystem==0.37.1",
+#   "termcolor==2.4.0",
+#   "terminaltables==3.1.0",
+#   "textparser==0.24.0",
+#   "threadpoolctl==3.5.0",
+#   "thrift==0.11.0",
+#   "toml==0.10.2",
+#   "tomli==2.0.1",
+#   "tomlkit==0.13.2",
+#   "toolz==1.0.0",
+#   "tornado==6.4.1",
+#   "tqdm==4.62.3",
+#   "traitlets==5.14.3",
+#   "transforms3d==0.4.2",
+#   "trimesh==4.4.3",
+  "typing-extensions>=4.12.2",
+#   "tzdata==2025.2",
+#   "tzlocal==4.3.1",
+#   "unify==0.5",
+#   "untokenize==0.1.1",
+#   "urllib3==1.26.16",
+#   "utm==0.5.0",
+  "uvicorn==0.34.0",
+#   "validators==0.35.0",
+#   "voy-ares-lib==0.1.15a1",
+#   "voy-auth==0.2.3",
+#   "voy-data-gateway-sdk==1.5.0",
+#   "voy-data-service-python-sdk==0.0.8",
+#   "voy-ddmq==1.0.0",
+#   "voy-diff==1.5.3",
+#   "voy-experiment-metadata==0.2.9",
+#   "voy-gift-sdk==1.0.0",
+#   "voy-hdfsproxy-client==1.3.3",
+#   "voy-onnxruntime-gpu==1.13.1",
+#   "voy-protobuf-to-dict==1.0.0",
+#   "voy-scan-udp==0.2.0",
+#   "voy-storage-utils==0.3.0",
+#   "voy-tempest==4.7.1",
+#   "voy-trail-api==4.7.0",
+#   "voy-trail-sdk==5.17.2",
+#   "voy-utm2all==1.0.0",
+#   "voy-vbag==1.0.3",
+#   "watchdog==6.0.0",
+#   "wcwidth==0.2.13",
+#   "websockets==10.2",
+#   "werkzeug==3.0.3",
+#   "wheel==0.43.0",
+#   "wrapt==1.12.1",
+#   "xxhash==3.5.0",
+#   "yapf==0.40.2",
+#   "yappi==1.3.5",
+#   "yarl==1.9.4",
+#   "zipp==3.19.2",
+#   "zope-interface==7.2",
+#   "zstandard==0.18.0",
+]
+
+[pycodestyle]
+# E501 reports lines that exceed the length of 100.
+max-line-length = 120
+
+# [tool.setuptools]
+# packages = []  # NOTE: use flat-layout
+
+[tool.pixi.workspace]
+platforms = ["linux-64", "osx-arm64"]
+channels = ["https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge", "conda-forge"]
+
+[tool.pixi.dependencies]
+async-lru = "*"
+fastapi = "*"
+ffmpeg = ">=7"
+httpx = "*"
+logfire = "*"
+mcp = "*"
+miniopy-async = "*"
+nest-asyncio = "*"
+numpy = "*"
+openai = "*"
+openpyxl = "*"
+opentelemetry-instrumentation-aiohttp-client = "*"
+opentelemetry-instrumentation-fastapi = "*"
+opentelemetry-instrumentation-httpx = "*"
+opentelemetry-instrumentation-system-metrics = "*"
+pandas = "*"
+pillow = "*"
+pyarrow = "*"
+pydantic = ">=2.12" # >=2.13.0
+pydantic-ai = ">=0.4.9"
+rich = "<15"
+streamlit = ">=1.47"
+tenacity = "*"
+tqdm = "*"
+typer = "*"
+typing-extensions = ">=4.12.2"
+uvicorn = "*"
+xlsxwriter = "*"
+
+[tool.pixi.pypi-options]
+index-url = "https://pypi.tuna.tsinghua.edu.cn/simple/"
+# no-binary = ["vlm-triage"]
+no-build = true
+
+# [tool.pixi.pypi-dependencies]
+# vlm-triage = {path = ".", editable = true}
+# openlit = "*"
+
+[tool.pixi.activation]
+scripts = [
+    "scripts/activation/pre-pixi.sh",
+    "scripts/activation/local.sh",
+    "scripts/activation/default.sh",
+]
+
+[tool.pixi.tasks]
+cleanup-cache = "rm -r cache/* || true"
+cleanup-logs = "rm -r logs/* || true"
+cleanup-py = "find . \\( -name '*.egg-info' -o -name '*.pyc' -o -name '__pycache__' -o -name '.DS_Store' \\) -delete || true"
+cleanup = [{task = "cleanup-py"}, {task = "cleanup-cache"}, {task = "cleanup-logs"}]
+make-py-exec = "find apps/ lib/ models/ tests/ -name '*.py' | xargs grep -l '#!/usr/bin/env -S pixi run' | xargs chmod a+x"
+make-sh-exec = "find scripts/ -name '*.sh' | xargs grep -l '#!/usr/bin/env -S pixi run' | xargs chmod a+x"
+make-exec = [{task = "make-py-exec"}, {task = "make-sh-exec"}]
+cooper-cli = "python -m lib.platforms.ep.cooper"
+cooper-read = {cmd = "python -m lib.platforms.ep.cooper export --url '{{ url }}' | python -m lib.platforms.ep.cooper normalize-docx | pixi exec markitdown", args = ["url"]}
+s3-cli = "python -m lib.utils.s3_utils"
+serve-fe = 'streamlit run --server.headless true --server.port "$TRIAGE_FE_PORT" --browser.gatherUsageStats false'
+
+[tool.pixi.feature.dev.dependencies]
+curl = "*"
+ipython = "*"
+jq = "*"
+# mypy = "*"
+py-spy = "*"
+ruff = "*"
+ty = "*"
+
+[tool.pixi.feature.dev.activation.env]
+OTEL_ENVIRONMENT_NAME = "dev"
+
+[tool.pixi.feature.dev.tasks]
+exp = "python -m lib.utils.experiments"
+format = "ruff format"
+ipyf = "ipython --pdb -i"
+ipym = {cmd = 'ipython --pdb -i -m "{{ module }}" --', args = ["module"]}
+ipyp = {cmd = 'ipython --pdb -i -m "$(scripts/path2module.sh "{{ path }}")" --', args = ["path"]}
+ipyx = "kill %%; clear; ipython --pdb -i"
+ipyy = {cmd = 'kill %%; clear; ipython --pdb -i -m "{{ module }}" --', args = ["module"]}
+ipyz = {cmd = 'kill %%; clear; ipython --pdb -i -m "$(scripts/path2module.sh "{{ path }}")" --', args = ["path"]}
+lint-dcl = "clear; dcl lint"
+lint-ruff = "clear; ruff check"
+lint-ty = "clear; ty check"
+
+[tool.pixi.feature.dev-extras.dependencies]
+nodejs = "*"
+opentelemetry-sdk = "*"
+pnpm = "*"
+typescript = "*"
+
+[tool.pixi.feature.dev-extras.tasks]
+codex = {cmd = "npx -y @openai/codex", env = {HTTPS_PROXY = "localhost:1080"}}
+codexp = "npx -y @openai/codex -p"
+copilot = "npx -y @github/copilot --experimental --log-level info --log-dir logs/"
+copilot-agent = {cmd = "npx -y @github/copilot --experimental --log-level info --log-dir logs/", env = {COPILOT_PROVIDER_BASE_URL = "$TRIAGE_MODEL_ROUTER_URL", COPILOT_PROVIDER_MODEL_ID = "#AgentModel"}}
+copilot-coder = {cmd = "npx -y @github/copilot --experimental --log-level info --log-dir logs/", env = {COPILOT_PROVIDER_BASE_URL = "$TRIAGE_MODEL_ROUTER_URL", COPILOT_PROVIDER_MODEL_ID = "#CoderModel"}}
+copilot-auto = "npx -y @github/copilot --experimental --log-level info --log-dir logs/ --model auto --effort high --enable-reasoning-summaries"
+copilot-gpt = "npx -y @github/copilot --experimental --log-level info --log-dir logs/ --model gpt-5.4 --effort high --enable-reasoning-summaries"
+copilot-haiku = {cmd = "npx -y @github/copilot --experimental --log-level info --log-dir logs/ --model claude-haiku-4.5", env = {HTTPS_PROXY = "localhost:1080"}}
+copilot-sonnet = {cmd = "npx -y @github/copilot --experimental --log-level info --log-dir logs/ --model claude-sonnet-4.6 --effort high", env = {HTTPS_PROXY = "localhost:1080"}}
+copilot-opus = {cmd = "npx -y @github/copilot --experimental --log-level info --log-dir logs/ --model claude-opus-4.6 --effort high", env = {HTTPS_PROXY = "localhost:1080"}}
+
+[tool.pixi.feature.test.dependencies]
+curl = "*"
+ipython = "*"
+jq = "*"
+psutil = "*"
+pytest = "*"
+pytest-asyncio = "*"
+pytest-cov = "*"
+
+[tool.pixi.feature.test.activation.env]
+OTEL_ENVIRONMENT_NAME = "test"
+
+[tool.pixi.feature.test.tasks]
+test = 'pytest --cov="$PROJECT_ROOT" --cov-append --cov-branch --cov-report='
+testm = 'python -m pytest --cov="$PROJECT_ROOT" --cov-append --cov-branch --cov-report= --pyargs'
+testp = {cmd = 'python -m pytest --cov="$PROJECT_ROOT" --cov-append --cov-branch --cov-report= --pyargs "$(scripts/path2module.sh "{{ path }}")"', args = ["path"]}
+pdbtest = "kill %%; clear; pytest --pdb --pdbcls=IPython.terminal.debugger:TerminalPdb --verbosity=1"
+pdbtestm = "kill %%; clear; python -m pytest --pdb --pdbcls=IPython.terminal.debugger:TerminalPdb --verbosity=1 --pyargs"
+pdbtestp = {cmd = 'kill %%; clear; python -m pytest --pdb --pdbcls=IPython.terminal.debugger:TerminalPdb --verbosity=1 --pyargs "$(scripts/path2module.sh "{{ path }}")"', args = ["path"]}
+coverase = "coverage erase"
+covcombine = "coverage combine"
+covreport = "coverage report"
+covxml = "coverage xml -o coverage.xml"
+covhtml = "coverage html -d htmlcov/"
+cov = [{task = "coverase"}, {task = "etest"}, {task = "covcombine"}, {task = "covreport"}, {task = "covxml"}]
+
+[tool.pixi.feature.test.tasks.etest]
+cmd = "clear; find apps/ lib/ models/ tests/ -name '*.py' | xargs grep -El '#!/usr/bin/env -S pixi run .*\\btest\\b' | /usr/bin/xargs -L1 sh -c"
+depends-on = ["make-py-exec"]
+
+[tool.pixi.feature.test-extras.pypi-dependencies]
+httpx = "*"
+
+[tool.pixi.feature.notebook.dependencies]
+jupyter = "*"
+
+[tool.pixi.feature.notebook.tasks]
+serve-notebook = "jupyter notebook --no-browser --ip=0.0.0.0 --port=\"$TRIAGE_NOTEBOOK_PORT\" --ServerApp.allow_origin='*' --IdentityProvider.token='didi'"
+
+# [tool.pixi.feature.voyager]
+# platforms = ["linux-64"]
+
+[tool.pixi.feature.voyager.dependencies]
+psutil = "==5.9.8"
+pycryptodome = "==3.15.0"
+python = "3.10.*"
+zstd = "*"
+
+[tool.pixi.feature.voyager.pypi-options]
+index-url = "http://10.88.128.83/pypi/voyager/stable/+simple/"
+no-build = true
+
+[tool.pixi.feature.voyager.activation]
+scripts = [
+    "scripts/activation/pre-pixi.sh",
+    "scripts/activation/local.sh",
+    "scripts/activation/voyager.sh",
+]
+
+[tool.pixi.feature.vllm-base]
+platforms = ["linux-64"]
+system-requirements = {cuda = "12.0"}
+
+[tool.pixi.feature.vllm-base.dependencies]
+c-compiler = "*"
+ccache = "*"
+cmake = ">=3.26.1"
+cuda-toolkit = "*"
+cxx-compiler = "*"
+ninja = "*"
+python = ">=3.11,<3.14"
+
+[tool.pixi.feature.vllm-base.pypi-options]
+index-url = "https://pypi.tuna.tsinghua.edu.cn/simple/"
+no-build = true
+
+[tool.pixi.feature.vllm-base.pypi-dependencies]
+mistral-common = "<1.9"
+opentelemetry-exporter-otlp-proto-http = "*"
+torch = "<2.9"
+transformers = ">=4.57.1,<4.58"
+vllm = ">=0.11"
+
+[tool.pixi.feature.vllm-base.activation]
+scripts = [
+    "scripts/activation/pre-pixi.sh",
+    "scripts/activation/local.sh",
+    "scripts/activation/transformers.sh",
+    "scripts/activation/vllm.sh",
+]
+
+[tool.pixi.feature.vllm-build]
+platforms = ["linux-64"]
+system-requirements = {cuda = "12.0"}
+
+[tool.pixi.feature.vllm-build.dependencies]
+c-compiler = "*"
+ccache = "*"
+cmake = ">=3.26.1"
+cuda-toolkit = "*"
+curl = "*"
+cxx-compiler = "*"
+git = "*"
+gxx = "<14"
+importlib-metadata = "==6.0.0"
+ninja = "*"
+packaging = "*"
+python = ">=3.10,<3.14"
+setuptools = ">=77.0.3,<81"
+setuptools-scm = ">=8"
+
+[tool.pixi.feature.vllm-build.pypi-options]
+index-url = "https://pypi.tuna.tsinghua.edu.cn/simple/"
+# no-binary = ["vllm"]
+no-build-isolation = ["vllm"]
+dependency-overrides = {transformers = ">=5.5.4"}
+
+[tool.pixi.feature.vllm-build.pypi-dependencies]
+flashinfer-python = "*"
+fpdb = "*"
+numpy = "<2.2.6"
+opentelemetry-exporter-otlp-proto-http = "*"
+torch = ">=2.10"
+vllm = ">=0.19,<0.20"  # 0.20 defaults to cuda 13.0 + torch 2.11 + transformers v5
+# vllm = ">=0.20"
+
+[tool.pixi.feature.vllm-build.activation]
+scripts = [
+    "scripts/activation/pre-pixi.sh",
+    "scripts/activation/local.sh",
+    "scripts/activation/transformers.sh",
+    "scripts/activation/vllm.sh",
+]
+
+[tool.pixi.feature.vllm-extras.pypi-dependencies]
+accelerate = "*"
+datasets = "*"
+fastapi = "*"
+flashinfer-python = "*"
+fpdb = "*"
+logfire = ">=4"
+opentelemetry-instrumentation-fastapi = "*"
+opentelemetry-instrumentation-system-metrics = "*"
+pillow = "*"
+py-spy = "*"
+pyarrow = "*"
+safetensors = "*"
+torch-c-dlpack-ext = "*"
+tqdm = "*"
+typing-extensions = ">=4.12.2"
+uvicorn = "*"
+
+[tool.pixi.feature.vllm-extras.tasks]
+vllm-spy = "py-spy"
+
+[tool.pixi.feature.opencv.dependencies]
+fastapi = ">=0.135.2,<0.136"
+httpx = "*"
+logfire = ">=4.31.0,<5"
+numpy = "*"
+opencv = "*"
+opentelemetry-instrumentation-fastapi = "*"
+opentelemetry-instrumentation-system-metrics = "*"
+pyarrow = ">=23.0.1,<24"
+safetensors = "*"
+uvicorn = "*"
+
+[tool.pixi.feature.opencv.activation]
+scripts = [
+    "scripts/activation/pre-pixi.sh",
+    "scripts/activation/local.sh",
+    "scripts/activation/opencv.sh",
+]
+
+[tool.pixi.feature.hadoop]
+platforms = ["linux-64"]
+
+[tool.pixi.feature.hadoop.dependencies]
+ipython = "*"
+openjdk = "<9"
+pyspark = "*"
+
+[tool.pixi.feature.hadoop.activation]
+scripts = [
+    "scripts/activation/pre-pixi.sh",
+    "scripts/activation/local.sh",
+    "scripts/activation/hadoop.sh",
+]
+
+[tool.pixi.feature.hadoop.tasks]
+sql = '"$SPARK_HOME/bin/spark-sql" --queue "$HADOOP_USER_QUEUE"'
+pyspark = '"$SPARK_HOME/bin/pyspark" --queue "$HADOOP_USER_QUEUE"'
+spark-submit = '"$SPARK_HOME/bin/spark-submit" --queue "$HADOOP_USER_QUEUE"'
+
+[tool.pixi.feature.fastdeploy]
+platforms = ["linux-64"]
+dependencies = {python = "*"}
+
+[tool.pixi.feature.fastdeploy.pypi-options]
+index-url = "https://pypi.tuna.tsinghua.edu.cn/simple/"
+no-build = true
+
+[tool.pixi.feature.fastdeploy.pypi-dependencies]
+fastdeploy = ">=3.0.18"
+torch = ">=2.6"
+
+[tool.pixi.feature.fawltydeps]
+dependencies = {python = "*"}
+pypi-dependencies = {fawltydeps = "*"}
+
+[tool.pixi.feature.fawltydeps.pypi-options]
+index-url = "https://pypi.tuna.tsinghua.edu.cn/simple/"
+no-build = true
+
+[tool.pixi.feature.fawltydeps.tasks]
+fawltydeps = "clear; fawltydeps --detailed --base-dir . --exclude-from .gitignore --pyenv .pixi/envs/*/"
+
+[tool.pixi.feature.litellm.dependencies]
+python = ">=3.10,<3.14"
+
+[tool.pixi.feature.litellm.pypi-options]
+index-url = "https://pypi.tuna.tsinghua.edu.cn/simple/"
+no-build = true
+
+[tool.pixi.feature.litellm.pypi-dependencies]
+litellm = {extras = ["proxy"], version = ">=1.83"}
+opentelemetry-exporter-otlp-proto-grpc = "*"
+opentelemetry-exporter-otlp-proto-http = "*"
+
+[tool.pixi.feature.litellm.activation]
+scripts = [
+    "scripts/activation/pre-pixi.sh",
+    "scripts/activation/local.sh",
+    "scripts/activation/litellm.sh",
+]
+
+[tool.pixi.feature.litellm.tasks]
+model-router = 'litellm -c litellm.yaml --port "$TRIAGE_MODEL_ROUTER_PORT" --debug --drop_params --telemetry false'
+model-router-public = 'litellm -c third-party/litellm-public.yaml --port "$TRIAGE_MODEL_ROUTER_PORT" --debug --drop_params --telemetry false'
+model-router-private = 'litellm -c third-party/litellm-private.yaml --port 8019 --debug --drop_params --telemetry false'
+
+[tool.pixi.feature.mkdocs.dependencies]
+griffe-pydantic = "*"
+mkdocs = "~=1.6"
+mkdocs-autorefs = "*"
+mkdocs-gen-files = "==0.5.0"
+mkdocs-literate-nav = "==0.6.1"
+mkdocs-material = "==9.5.9"
+mkdocs-section-index = "*"
+mkdocstrings = "~=1.0"
+mkdocstrings-python = "~=2.0"
+pymdown-extensions = "*"
+ruff = "*"
+
+[tool.pixi.feature.mkdocs.activation]
+scripts = [
+    "scripts/activation/pre-pixi.sh",
+    "scripts/activation/local.sh",
+]
+
+[tool.pixi.feature.mkdocs.tasks]
+mkdocs-build = "clear; mkdocs build -f mkdocs.yml"
+mkdocs-serve = "mkdocs serve -f mkdocs.yml -a 0.0.0.0:$TRIAGE_DOCS_PORT"
+
+[tool.pixi.feature.modelscope.dependencies]
+modelscope = "*"
+packaging = "*"
+setuptools = "<81"
+
+[tool.pixi.feature.modelscope.activation]
+scripts = [
+    "scripts/activation/pre-pixi.sh",
+    "scripts/activation/local.sh",
+    "scripts/activation/transformers.sh",
+]
+
+[tool.pixi.feature.modelscope.tasks]
+download-models = "clear; sh scripts/modelscope-download.sh"
+
+[tool.pixi.feature.pipreqs.dependencies]
+ipython = "*"
+pipreqs = "*"
+python = "*"
+
+[tool.pixi.feature.pipreqs.activation]
+scripts = [
+    "scripts/activation/pre-pixi.sh",
+    "scripts/activation/local.sh",
+    "scripts/activation/voyager.sh",
+]
+env = {PYTHONPATH = ""}  # WORKAROUND: pipreqs read error
+
+[tool.pixi.feature.pipreqs.tasks]
+pipreqs = "clear; pipreqs --force --debug --ignore .pixi"  # --pypi-server https://pypi.tuna.tsinghua.edu.cn/simple/ 404
+
+[tool.pixi.environments]
+default = {features = ["dev", "notebook", "test"], solve-group = "default"}
+dev-full = {features = ["dev", "dev-extras", "notebook", "test"], solve-group = "default"}
+prod = {features = [], solve-group = "default"}
+voyager = {features = ["voyager"], solve-group = "voyager", no-default-feature = true}
+voyager-dev = {features = ["voyager", "dev", "test", "test-extras"], solve-group = "voyager", no-default-feature = true}
+vllm-base = {features = ["vllm-base"], solve-group = "vllm", no-default-feature = true}
+vllm-latest = {features = ["vllm-build"], no-default-feature = true}
+vllm = {features = ["vllm-base", "vllm-extras", "dev", "test", "test-extras"], solve-group = "vllm", no-default-feature = true}
+opencv = {features = ["opencv", "dev", "test"], solve-group = "opencv", no-default-feature = true}
+hadoop = {features = ["hadoop", "dev", "test"], no-default-feature = true}
+fastdeploy = {features = ["fastdeploy"], no-default-feature = true}
+fawltydeps = {features = ["fawltydeps"], no-default-feature = true}
+litellm = {features = ["litellm"], no-default-feature = true}
+mkdocs = {features = ["mkdocs"], no-default-feature = true}
+modelscope = {features = ["modelscope"], no-default-feature = true}
+pipreqs = {features = ["pipreqs"], no-default-feature = true}
+
+[tool.pyright]
+ignore = ["reportDeprecated"]
+
+[tool.pytest.ini_options]
+addopts = ["--continue-on-collection-errors", "--doctest-modules", "--doctest-continue-on-failure"]
+# anyio_mode = "auto"
+asyncio_debug = true
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+asyncio_mode = "auto"
+# doctest_optionflags = []
+log_level = "INFO"
+logfire = true
+testpaths = ["apps", "lib", "models", "tests"]
+markers = [
+    "smoke: 冒烟测试 — 最快路径验证 API 通断",
+    "functional: 功能测试 — 各模块正常功能验证",
+    "coverage: 覆盖测试 — 边角情况/错误路径/边界值",
+    "stress: 压力测试 — 并发/稳定性验证",
+    "resource: 资源密集测试 — 捕获耗时/RSS/GPU 内存报告",
+]
+
+[tool.coverage.paths]
+source = ["apps", "lib", "models"]
+
+[tool.coverage.report]
+exclude_lines = [
+    # 标准的排除标记
+    "pragma: no cover",
+
+    # 排除入口保护块
+    "if __name__ == .__main__.:",
+
+    # 排除类型检查时的导入（运行时不执行）
+    "if TYPE_CHECKING:",
+
+    # 排除抽象方法（没有实现逻辑）
+    "@(abc\\.)?abstractmethod",
+
+    # 排除防御性断言（通常是永远不会发生的错误）
+    "raise AssertionError",
+    "raise NotImplementedError",
+
+    # 排除协议/接口定义
+    "class .*\\bProtocol\\):",
+    "@(.*\\.)?runtime_checkable",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["ANN", "B", "COM", "E", "F", "Q"]
+ignore = ["ANN201", "ANN202", "ANN204", "ANN401", "B008", "B013", "E401", "E402", "E701", "E731"]
+
+allowed-confusables = ["l"]
+flake8-type-checking.quote-annotations = true
+# isort.lines-after-imports = 2
+
+[tool.ruff.lint.flake8-quotes]
+avoid-escape = true
+docstring-quotes = "double"
+inline-quotes = "single"
+multiline-quotes = "double"
+
+[tool.ruff.format]
+docstring-code-format = true
+quote-style = "preserve"
+
+[tool.ty.rules]
+all = "warn"
+
+implicit-any = "error"
+missing-annotations = "warn"
+report-unknown-member-types = "warn"
+report-unknown-parameter-type = "warn"
+report-unknown-return-type = "warn"
+report-unknown-variable-type = "warn"
+unknown-type = "error"
+# unresolved-reference = "warn"

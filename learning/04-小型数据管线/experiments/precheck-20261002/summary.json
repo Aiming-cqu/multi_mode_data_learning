@@ -1,0 +1,6 @@
+{
+  "input": "/Users/didi/workspace/multi_model_data_learning/learning/04-小型数据管线/experiments/input_error.jsonl",
+  "total": 6,
+  "valid": 5,
+  "invalid": 1
+}

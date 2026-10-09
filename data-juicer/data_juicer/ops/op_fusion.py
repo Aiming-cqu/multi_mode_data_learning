@@ -1,0 +1,431 @@
+from typing import List, Optional
+
+import numpy as np
+from loguru import logger
+
+from data_juicer.ops.base_op import OP, OPERATORS, Filter, Mapper
+from data_juicer.ops.fused_batch_executor import (
+    GENERAL_FUSED_EXECUTION_POLICY,
+    execute_sequential_batch,
+)
+from data_juicer.ops.load import load_ops
+from data_juicer.utils.constant import Fields, InterVars
+from data_juicer.utils.lazy_loader import LazyLoader
+from data_juicer.utils.registry import Registry
+
+# Type of intermediate vars
+# text
+INTER_LINES = Registry(InterVars.lines)
+INTER_WORDS = Registry(InterVars.words)
+
+# images
+LOADED_IMAGES = Registry(InterVars.loaded_images)
+
+# audios
+LOADED_AUDIOS = Registry(InterVars.loaded_audios)
+
+# videos
+LOADED_VIDEOS = Registry(InterVars.loaded_videos)
+INTER_SAMPLED_FRAMES = Registry(InterVars.sampled_frames)
+
+# all
+ALL_INTER_VARS = [INTER_LINES, INTER_WORDS, LOADED_AUDIOS, LOADED_IMAGES, LOADED_VIDEOS, INTER_SAMPLED_FRAMES]
+
+# supported fusion strategies
+FUSION_STRATEGIES = {"greedy", "probe"}
+MAPPER_FUSION_SAFE_ATTR = "_fused_sequential_batch_op_safe"
+
+
+def fuse_operators(ops, probe_res=None, mapper_fusion=True, mapper_fusion_vram_limit=0.9):
+    """
+    Fuse the input ops list and return the fused ops list.
+
+    :param ops: the corresponding list of op objects.
+    :param probe_res: the probed speed for each OP from Monitor.
+    :param mapper_fusion: whether to fuse consecutive independent GPU Mappers
+        into FusedSequentialBatchOp for single-stage execution. Only effective when
+        op_fusion is true.
+    :param mapper_fusion_vram_limit: max aggregate GPU memory budget (fraction
+        of one GPU) for a fused mapper group. Default 0.9.
+    :return: a list of fused op objects.
+    """
+    if probe_res is None:
+        probe_res = [None for _ in range(len(ops))]
+    # detect filter groups and try to fuse them
+    fused_ops = []
+    filter_group = []
+    for op, op_probe in zip(ops, probe_res):
+        if isinstance(op, Filter):
+            filter_group.append((op, op_probe))
+        else:
+            if filter_group:
+                # got a filter group, try to fuse them
+                fused_ops.extend(fuse_filter_group(filter_group))
+                filter_group = []
+            # and add the current non-filter op into fused_ops
+            fused_ops.append(op)
+    # the final filter group, try to fuse them
+    if filter_group:
+        fused_ops.extend(fuse_filter_group(filter_group))
+
+    # Phase 2: fuse consecutive GPU Mappers
+    if mapper_fusion:
+        fused_ops = fuse_consecutive_mappers(fused_ops, vram_limit=mapper_fusion_vram_limit)
+
+    return fused_ops
+
+
+def fuse_filter_group(original_filter_group):
+    """
+    Fuse single filter group and return the fused filter group.
+
+    :param original_filter_group: the original filter group, including op
+        definitions and objects.
+    :return: the fused definitions and objects of the input filter group.
+    """
+    fused_group = []
+    group_speed = []
+    all_intermediate_vars = ALL_INTER_VARS
+    all_fused_filters = {inter_vars: [] for inter_vars in all_intermediate_vars}
+    # group these filters by their intermediate vars
+    for op, probe_res in original_filter_group:
+        op_name = op._name
+        for inter_vars in all_intermediate_vars:
+            if op_name in inter_vars.modules:
+                all_fused_filters[inter_vars].append((op, probe_res))
+                break
+        else:
+            # first apply other filters to decrease the number of samples, so
+            # we add them into the fused_group list directly
+            fused_group.append(op)
+            group_speed.append(probe_res["speed"] if probe_res else 0)
+
+    # try to fuse ops for each type of intermediate vars
+    for inter_vars in all_intermediate_vars:
+        inter_vars_filter = all_fused_filters[inter_vars]
+        if len(inter_vars_filter) == 0:
+            # no ops include this type of intermediate var
+            pass
+        elif len(inter_vars_filter) > 1:
+            # more than 1 ops share the same intermediate var, try to fuse them
+            ops, probe_res_list = zip(*inter_vars_filter)
+            # new definition: new name and a definition list of fused op list
+            fused_filter_name = "OpFusion:(%s)" % ",".join([op._name for op in ops])
+            logger.info(f"Ops are fused into one op " f"{fused_filter_name}.")
+            # use these ops to create a FusedFilter object, and add the fused
+            # definition and op into the fused group
+            fused_filter = FusedFilter(fused_filter_name, ops)
+            fused_filter._op_cfg = {fused_filter_name: [op._op_cfg for op in ops]}
+            fused_filter_speed = sum([1.0 / probe_res["speed"] for probe_res in probe_res_list if probe_res])
+            if fused_filter_speed > 0:
+                fused_filter_speed = 1.0 / fused_filter_speed
+            fused_group.append(fused_filter)
+            group_speed.append(fused_filter_speed)
+        else:
+            # only 1 op for this type of intermediate var, add it to the fused
+            # group directly without fusion
+            fused_group.append(inter_vars_filter[0][0])
+            probe_res = inter_vars_filter[0][1]
+            group_speed.append(probe_res["speed"] if probe_res else 0)
+
+    # reorder according to the probed speed results in group_speed
+    # 'greedy': all speed data in group_speed will be 0, which will keep the
+    #   current order of fused group
+    # 'probe': OPs in fused group will be reordered according to the speed data
+    #   in group_speed in descending order
+    fused_group = [op for op, _ in sorted(zip(fused_group, group_speed), key=lambda it: it[1], reverse=True)]
+
+    return fused_group
+
+
+class FusedFilter(Filter):
+    """A fused operator for filters."""
+
+    _batched_op = True
+
+    def __init__(self, name: str, fused_filters: List):
+        """
+        Initialization method.
+
+        :param fused_filters: a list of filters to be fused.
+        """
+        self._name = name
+        super().__init__()
+        self.fused_filters = fused_filters
+        # set accelerator to 'cuda' if there exists any ops whose accelerator
+        # is 'cuda'
+        accelerator_methods = set([op.accelerator for op in self.fused_filters])
+        if "cuda" in accelerator_methods:
+            self.accelerator = "cuda"
+
+        # update num_proc with the min num_proc of all fusible filters
+        self.num_proc = min([op.runtime_np() for op in self.fused_filters])
+
+    def compute_stats_batched(self, samples, rank=None):
+        from data_juicer.utils.video_utils import setup_av
+
+        av = LazyLoader("av", post_import=setup_av)
+
+        # context for the intermediate vars
+        num_samples = len(samples[Fields.stats])
+        samples[Fields.context] = [{} for _ in range(num_samples)]
+        for op in self.fused_filters:
+            # open the context for these fused ops
+            if op.accelerator == "cuda":
+                samples = op.compute_stats_batched(samples, rank=rank, context=True)
+            else:
+                samples = op.compute_stats_batched(samples, context=True)
+        # clean up the contexts after processing
+        # check if there are containers that need to be closed
+        for ctx in samples[Fields.context]:
+            for context_key in ctx:
+                if isinstance(ctx[context_key], av.container.InputContainer):
+                    ctx[context_key].streams.video[0].close()
+                    ctx[context_key].close()
+        _ = samples.pop(Fields.context)
+        return samples
+
+    def process_batched(self, samples):
+        # Only return True when all filters return True
+        res = None
+        for op in self.fused_filters:
+            this_res = np.array(list(op.process_batched(samples)))
+            if res is not None:
+                res = np.logical_and(res, this_res)
+            else:
+                res = this_res
+        return res
+
+
+@OPERATORS.register_module("general_fused_op")
+class GeneralFusedOP(Mapper):
+    """An explicitly fused operator designed to execute multiple sequential operations (OPs) on
+    the same batch, enabling fine-grained control over data processing.
+
+    This operator allows for the chaining of multiple data processing steps, such as mappers
+    and filters, into a single pass. It processes each batch of samples sequentially through
+    the defined operations, ensuring that all specified transformations are applied in
+    order. The operator supports both mappers, which transform data, and filters, which
+    remove or keep samples based on computed statistics. Context variables can be passed
+    between operations if needed. The accelerator is set to 'cuda' if any of the fused
+    operations use it. The number of processes is determined by the minimum value among all
+    fused operations. After processing, any temporary context variables, such as those used
+    for video containers, are cleaned up."""
+
+    _batched_op = True
+
+    def __init__(self, batch_size: int = 1, fused_op_list: Optional[List] = None, *args, **kwargs):
+        """
+        Initialization.
+
+        :param batch_size: the batch size of the input samples.
+        :param fused_op_list: a list of OPs to be fused.
+        """
+        super().__init__(*args, **kwargs)
+        self.batch_size = batch_size
+        if fused_op_list is None:
+            fused_op_list = []
+        self.fused_ops = load_ops(fused_op_list)
+        self._name = "GeneralFusedOP:(%s)" % ",".join([op._name for op in self.fused_ops])
+        # set accelerator to 'cuda' if there exists any ops whose accelerator
+        # is 'cuda'
+        accelerator_methods = set([op.accelerator for op in self.fused_ops])
+        if "cuda" in accelerator_methods:
+            self.accelerator = "cuda"
+
+        # update num_proc with the min num_proc of all fusible filters
+        self.num_proc = min([op.runtime_np() for op in self.fused_ops]) if self.fused_ops else 1
+
+    def process_batched(self, samples, rank=None):
+        return execute_sequential_batch(
+            samples,
+            self.fused_ops,
+            rank=rank,
+            owner_name=self._name,
+            policy=GENERAL_FUSED_EXECUTION_POLICY,
+        )
+
+    def run(self, dataset, *, exporter=None, tracer=None):
+        # prepare the dataset
+        from data_juicer.core.data import NestedDataset
+
+        if not isinstance(dataset, NestedDataset):
+            dataset = NestedDataset(dataset)
+        if not self.fused_ops:
+            return dataset
+        # initialize for different kinds of datasets
+        for op in self.fused_ops:
+            dataset = OP.run(op, dataset)
+
+        new_dataset = dataset.map(
+            self.process_batched,
+            num_proc=self.num_proc,
+            with_rank=self.use_cuda(),
+            batch_size=self.batch_size,
+            desc=self._name + "_process",
+        )
+        return new_dataset
+
+
+def _is_gpu_mapper(op) -> bool:
+    """Check if an op is a Mapper that requires GPU."""
+    return isinstance(op, Mapper) and (getattr(op, "num_gpus", 0) or 0) > 0
+
+
+def _is_fusible_gpu_mapper(op) -> bool:
+    """Check whether a GPU Mapper explicitly opts into stage fusion."""
+    return _is_gpu_mapper(op) and bool(getattr(op, MAPPER_FUSION_SAFE_ATTR, False))
+
+
+def _estimated_vram_fraction(op) -> Optional[float]:
+    value = getattr(op, "estimated_vram_fraction", None)
+    if value is None:
+        return None
+    try:
+        value = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Mapper [{op._name}] has invalid estimated_vram_fraction [{value}].") from exc
+    if not 0 < value <= 1:
+        raise ValueError(f"Mapper [{op._name}] estimated_vram_fraction must be in (0, 1], " f"but got [{value}].")
+    return value
+
+
+def _runtime_envs_compatible(ops: list) -> bool:
+    if not ops:
+        return True
+    first_runtime_env = getattr(ops[0], "runtime_env", None)
+    return all(getattr(op, "runtime_env", None) == first_runtime_env for op in ops[1:])
+
+
+def _are_ops_independent(ops: list) -> bool:
+    """Check if ops write to disjoint output keys and have no local dependencies."""
+    produced_cols = set()
+    for op in ops:
+        op_reads = set(getattr(op, "_input_columns", []) or [])
+        op_writes = set(getattr(op, "_output_columns", []) or [])
+
+        if not op_writes:
+            logger.debug(f"Mapper fusion: op [{op._name}] does not define " f"_output_columns; skipping stage fusion")
+            return False
+        if op_writes & produced_cols:
+            logger.debug(
+                f"Mapper fusion: op [{op._name}] writes columns already "
+                f"produced by the current group: {sorted(op_writes & produced_cols)}"
+            )
+            return False
+        if op_reads & produced_cols:
+            logger.debug(
+                f"Mapper fusion: op [{op._name}] reads columns produced "
+                f"by the current group: {sorted(op_reads & produced_cols)}"
+            )
+            return False
+        produced_cols.update(op_writes)
+    return True
+
+
+def _mapper_group_blocker(mapper_group: list, vram_limit: float) -> Optional[str]:
+    if not 0 < vram_limit <= 1:
+        raise ValueError(f"mapper_fusion_vram_limit must be in (0, 1], but got [{vram_limit}].")
+    if not all(_is_fusible_gpu_mapper(op) for op in mapper_group):
+        return "at least one op has not explicitly opted into sequential batch fusion"
+    if not _are_ops_independent(mapper_group):
+        return "ops are not independent (shared column dependencies)"
+    if not _runtime_envs_compatible(mapper_group):
+        return "ops require different Ray runtime environments"
+
+    vram_fractions = [_estimated_vram_fraction(op) for op in mapper_group]
+    missing_estimates = [op._name for op, fraction in zip(mapper_group, vram_fractions) if fraction is None]
+    if missing_estimates:
+        return "ops do not declare estimated_vram_fraction: " f"{missing_estimates}"
+
+    total_vram_fraction = sum(vram_fractions)
+    if total_vram_fraction > vram_limit:
+        return f"aggregate estimated VRAM ({total_vram_fraction:.2f}) exceeds " f"limit ({vram_limit:.2f})"
+    return None
+
+
+def fuse_mapper_group(mapper_group: list, vram_limit: float = 0.9) -> list:
+    """Fuse consecutive independent GPU Mappers into FusedSequentialBatchOp.
+
+    Safety rules:
+    - All ops must be Mapper instances with num_gpus > 0
+    - All ops must explicitly opt in with _fused_sequential_batch_op_safe = True
+    - Ops must be independent (disjoint declared output columns)
+    - All ops must declare estimated_vram_fraction
+    - Aggregate estimated VRAM should not exceed vram_limit
+    - All ops must use the same Ray runtime environment
+
+    Returns a list with either the original ops (if not fuseable)
+    or a single FusedSequentialBatchOp wrapping the group.
+    """
+    from data_juicer.ops.fused_sequential_batch_op import FusedSequentialBatchOp
+
+    if not mapper_group:
+        return []
+
+    blocker = _mapper_group_blocker(mapper_group, vram_limit)
+    if blocker:
+        logger.info(f"Mapper fusion: skipping group {[op._name for op in mapper_group]} " f"because {blocker}")
+        return list(mapper_group)
+
+    group_name = "fused:" + ",".join(op._name for op in mapper_group)
+    num_proc = min(op.runtime_np() for op in mapper_group)
+    batch_size = min(getattr(op, "batch_size", 1) or 1 for op in mapper_group)
+    num_cpus_values = [getattr(op, "num_cpus", None) for op in mapper_group]
+    num_cpus_values = [value for value in num_cpus_values if value is not None]
+    num_cpus = max(num_cpus_values) if num_cpus_values else None
+    fused = FusedSequentialBatchOp(
+        fused_ops=mapper_group,
+        group_name=group_name,
+        accelerator="cuda",
+        num_gpus=1.0,
+        num_cpus=num_cpus,
+        num_proc=num_proc,
+        batch_size=batch_size,
+        auto_op_parallelism=False,
+        runtime_env=getattr(mapper_group[0], "runtime_env", None),
+    )
+    fused._op_cfg = {group_name: [getattr(op, "_op_cfg", {op._name: {}}) for op in mapper_group]}
+
+    logger.info(
+        f"Ops are fused into FusedSequentialBatchOp '{group_name}' "
+        f"({len(mapper_group)} ops, num_gpus={fused.num_gpus}, "
+        f"num_proc={fused.num_proc}, batch_size={fused.batch_size})"
+    )
+    return [fused]
+
+
+def fuse_consecutive_mappers(ops: list, vram_limit: float = 0.9) -> list:
+    """Scan op list and fuse consecutive GPU Mapper groups.
+
+    Groups are delimited by non-Mapper ops or CPU ops.
+    Each group of >= 2 consecutive GPU Mappers is fused
+    into a FusedSequentialBatchOp. Single GPU Mappers pass through.
+    """
+    if not 0 < vram_limit <= 1:
+        raise ValueError(f"mapper_fusion_vram_limit must be in (0, 1], but got [{vram_limit}].")
+
+    result = []
+    mapper_group = []
+
+    def flush_group():
+        nonlocal mapper_group
+        if len(mapper_group) >= 2:
+            result.extend(fuse_mapper_group(mapper_group, vram_limit=vram_limit))
+        else:
+            result.extend(mapper_group)
+        mapper_group = []
+
+    for op in ops:
+        if _is_fusible_gpu_mapper(op):
+            candidate_group = mapper_group + [op]
+            if mapper_group and _mapper_group_blocker(candidate_group, vram_limit):
+                flush_group()
+            mapper_group.append(op)
+        else:
+            flush_group()
+            result.append(op)
+
+    flush_group()
+
+    return result

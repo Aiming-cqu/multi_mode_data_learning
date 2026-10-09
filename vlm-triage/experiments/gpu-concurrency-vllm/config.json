@@ -1,0 +1,22 @@
+{
+  "name": "gpu-concurrency-vllm",
+  "description": "评估 vLLM Python API 在 GPU 并发模型推理场景中的调度能力。",
+  "status": "in_progress",
+  "entrypoint": "experiments/gpu-concurrency-vllm/run_loader_poc.py",
+  "benchmark_entrypoint": "experiments/gpu-concurrency-vllm/benchmark_loader_models.py",
+  "benchmark_models": [
+    "clip",
+    "aimv2",
+    "dino"
+  ],
+  "metrics": [
+    "latency",
+    "throughput",
+    "gpu_memory"
+  ],
+  "created_at": "2026-05-14T18:43:43+08:00",
+  "runtime": {
+    "env_name": "vllm-base + vllm-extras",
+    "features": []
+  }
+}

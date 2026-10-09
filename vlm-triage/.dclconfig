@@ -1,0 +1,22 @@
+lint:
+  exclude:
+  - "(^third-party/)"
+  path_reg_group:
+  - name: python
+    path_regs:
+    - "(.py$)"
+  linters:
+  - name: ruff
+    type: ruff
+    bin: ruff
+    flags:
+    - "check"
+    include:
+    - "group:python"
+  - name: ty
+    type: ty
+    bin: ty
+    flags:
+    - "check"
+    include:
+    - "group:python"

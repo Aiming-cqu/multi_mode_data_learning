@@ -1,0 +1,140 @@
+name: Deploy Sphinx documentation to Pages
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - "**/*.md"
+      - "docs/**"
+      - "data_juicer/**/*.py"
+      - "pyproject.toml"
+      - ".github/workflows/deploy_sphinx_docs.yml"
+  push:
+    branches:
+      - main
+    tags:
+      - "*"
+  workflow_dispatch:
+    inputs:
+      full:
+        description: "Full rebuild of all versions (refreshes theme on old tags, cleans orphan files)"
+        type: boolean
+        default: false
+
+jobs:
+  pages:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11"]
+    env:
+      PROJECT: ${{ github.event.repository.name }}
+      REPO_OWNER: ${{ github.repository_owner }}
+      MIN_TAG: v1.4.0
+      JUICER_API_URL: ${{ vars.JUICER_API_URL }}
+    steps:
+      - name: Mount /mnt into workspace (writable)
+        run: |
+          set -euxo pipefail
+          sudo mkdir -p /mnt/repo
+          sudo chown -R "$USER:$USER" /mnt/repo
+          mkdir -p "$GITHUB_WORKSPACE/repo"
+          sudo mount --bind /mnt/repo "$GITHUB_WORKSPACE/repo"
+          sudo chown -R "$USER:$USER" "$GITHUB_WORKSPACE/repo"
+          ls -ld /mnt/repo "$GITHUB_WORKSPACE/repo"
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: repo
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@master
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Free disk space
+        run: |
+          sudo swapoff -a
+          sudo rm -f /swapfile
+          sudo apt-get autoremove -y >/dev/null 2>&1
+          sudo apt-get autoclean -y >/dev/null 2>&1
+          sudo rm -rf /usr/local/lib/android >/dev/null 2>&1
+          sudo apt clean
+          df -h
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Fetch Data-Juicer Sphinx Theme
+        working-directory: repo
+        run: |
+          set -e
+          echo "Cloning sphinx theme..."
+          git clone --depth=1 https://github.com/datajuicer/data-juicer-sphinx.git /tmp/template
+          # CPU packages provide the real model base classes used by autodoc.
+          uv pip install --system torch==2.8.0 torchvision==0.23.0 \
+            --index https://download.pytorch.org/whl/cpu
+          uv pip install --system -e '.[distributed,tools]' -r docs/requirements-sphinx.txt
+          # Load the theme as a Sphinx extension. Its package metadata also
+          # requires unused translation/NumPy dependencies that conflict with DJ.
+          echo 'PYTHONPATH=/tmp/template' >> "$GITHUB_ENV"
+          if [ -d "docs/sphinx_doc/source" ]; then
+            echo "Backing up custom files..."
+            mkdir -p /tmp/custom_files
+            cp -r docs/sphinx_doc/source /tmp/custom_files
+          fi
+          echo "Applying template..."
+          rm -rf docs/sphinx_doc
+          mkdir -p docs
+          cp -r /tmp/template/docs/sphinx_doc docs/
+          echo "Restoring custom files..."
+          cp -rf /tmp/custom_files/source/* docs/sphinx_doc/source
+          printf '\nextensions.append("data_juicer_sphinx_theme")\n' >> docs/sphinx_doc/source/conf.py
+          echo "Done!"
+          df -h
+      - name: Get git tags
+        working-directory: repo
+        run: |
+          git fetch --all --tags
+          git branch -a
+          git tag
+      - id: build
+        name: Build Documentation
+        working-directory: repo
+        run: |
+          cd docs/sphinx_doc
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            python build_versions.py --current preview
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.full }}" = "true" ]; then
+            python build_versions.py --tags
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            python build_versions.py --branches --tags "${GITHUB_REF_NAME}"
+          else
+            python build_versions.py --branches main
+          fi
+      - name: Generate versions.json
+        if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+        working-directory: repo
+        run: |
+          cd docs/sphinx_doc
+          python build_versions.py --emit-versions-json
+      - name: Redirect index.html
+        working-directory: repo
+        run: |
+          REPOSITORY_OWNER="${GITHUB_REPOSITORY_OWNER}"
+          cd docs/sphinx_doc
+          cp ./redirect.html build/index.html
+          sed -i "s/\[REPOSITORY_OWNER\]/${REPOSITORY_OWNER}/g" build/index.html
+          sed -i "s/\[PROJECT\]/${PROJECT}/g" build/index.html
+          cp build/index.html build/404.html
+          df -h
+      - name: Upload Documentation
+        uses: actions/upload-artifact@v4
+        with:
+          name: SphinxDoc
+          path: "repo/docs/sphinx_doc/build"
+      - uses: peaceiris/actions-gh-pages@v3
+        if: ${{ (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || github.event_name == 'workflow_dispatch' }}
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: "repo/docs/sphinx_doc/build"
+          keep_files: ${{ !(github.event_name == 'workflow_dispatch' && inputs.full) }}

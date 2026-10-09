@@ -1,0 +1,22 @@
+{
+  "baseline": {
+    "latency": 7.611667,
+    "throughput": 0.187264,
+    "gpu_memory": 4981.0,
+    "success_rate": 1.0
+  },
+  "notes": {
+    "evaluation_scope": "clip + aimv2 + dino (cached local models only)",
+    "candidate_result_file": "results/loader_metrics_latest.json",
+    "baseline_result_file": "results/loader_metrics_baseline_cached_latest.json",
+    "method": "candidate uses vLLM loader PoC; baseline uses ModelLoaderBase + AutoModel(local_files_only=True)"
+  },
+  "candidates": {
+    "vllm_loader": {
+      "latency": 37.521766,
+      "throughput": 0.0,
+      "gpu_memory": 0.0,
+      "success_rate": 0.0
+    }
+  }
+}

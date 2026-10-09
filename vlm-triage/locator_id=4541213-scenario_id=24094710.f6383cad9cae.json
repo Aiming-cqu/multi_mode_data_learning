@@ -1,0 +1,25 @@
+{
+  "locator_id": 4541213,
+  "scenario_id": "24094710",
+  "base_task_id": 3628143100000564,
+  "feat_task_id": 3628143700000566,
+  "diff_type": "F2P",
+  "metrics": [
+    "dpe_collision"
+  ],
+  "locator_url": "http://10.190.55.60:8000/pages/crlocator.html?id=4541213",
+  "diff_url": "https://voyager.intra.xiaojukeji.com/static/management/#/simulation/review?reviewType=taskDiff&taskIds=3628143100000564,3628143700000566&selectedMetrics=dpe_collision",
+  "annotations": [
+    {
+      "cr_index": 17,
+      "cr_desc": "3630203700000107 / 42479ea7f1ad92c92210708097668195a215158f",
+      "window_index": "01",
+      "window_desc": "W01 @ 4306ms",
+      "sample_index": "05",
+      "sample_desc": "S05 @ +490ms",
+      "image_url": "https://s3-nmgpu-inter.didistatic.com/te-ds-autolabeling-dos-1/luonairui/data/visual-cr-locator-api/202604/5b803496a82f/locator_id%3D4541213-scenario_id%3D24094710-cr_index%3D17-task_id%3D3630203700000107-commit%3D42479ea7f1ad92c92210708097668195a215158f-window_index%3D01-window_time%3D04306-sample_index%3D05-sample_time%3D04796.jpg?response-content-disposition=inline&response-content-type=image%2Fjpeg&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKDD00000000000ZR6IP2BA7BQEHEG%2F20260416%2Fnmgpu%2Fs3%2Faws4_request&X-Amz-Date=20260416T081727Z&X-Amz-Expires=604800&X-Amz-SignedHeaders=host&X-Amz-Signature=06958a7156bec7119c74231cdd41c422f8637c9174cb7d9958f43687c74d8275",
+      "diff_type": "F2P",
+      "rank": "关键"
+    }
+  ]
+}

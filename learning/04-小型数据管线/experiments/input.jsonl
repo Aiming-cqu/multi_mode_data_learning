@@ -1,0 +1,5 @@
+{"index": "A", "images":["/Users/didi/workspace/multi_model_data_learning/data-juicer/tests/ops/data/img1.png"], "text": "<__dj__image> A comfortable bed."}
+{"index": "B", "images":["/Users/didi/workspace/multi_model_data_learning/data-juicer/tests/ops/data/img2.jpg"], "text": "<__dj__image> A bus."}
+{"index": "C", "images":["/Users/didi/workspace/multi_model_data_learning/data-juicer/tests/ops/data/img3.jpg"], "text": "<__dj__image> Black and white photograph of a woman holding an umbrella."}
+{"index": "D", "images":["/Users/didi/workspace/multi_model_data_learning/data-juicer/tests/ops/data/img2.jpg"], "text": "<__dj__image> A big bus."}
+{"index": "E", "images":["/Users/didi/workspace/multi_model_data_learning/data-juicer/tests/ops/data/img1.png"], "text": "<__dj__image> A comfortable bed."}

@@ -1,0 +1,59 @@
+@startuml
+title 本地 default 调用交接（非微服务系统）
+actor "命令行" as CLI
+box "Data-Juicer 同一 Python 进程"
+participant "main" as Main
+participant "init_configs" as Config
+participant "DefaultExecutor" as Exec
+participant "load_ops" as Load
+participant "NestedDataset" as Data
+participant "ImageShapeFilter 实例" as Op
+participant "Exporter" as Out
+end box
+box "同进程第三方库"
+participant "jsonargparse" as Parser
+end box
+database "本地文件系统" as Disk
+CLI -> Main : S1 main()，入口绑定 pyproject.toml:190
+Main -> Config : S2 init_configs()，process_data.py:20
+Config -> Parser : parse_args，config.py:871、894
+Parser -> Disk : ActionConfigFile -> parse_path -> read_text
+Disk --> Parser : YAML 文本，_core.py:666
+Parser --> Config : 合并后的配置，_actions.py:157-158 / _core.py:509
+note over Config,Parser
+两轮主要解析之间，config.py:877-890 还会显式重读 YAML、补充参数规则。
+随后 config.py:911、914 做收尾，1341 再次解析校验。
+end note
+alt 配置有效
+  Config --> Main : return cfg，config.py:941
+else 配置无效
+  Config --> Main : 报错或退出，不进入成功处理链
+end
+Main -> Exec : S3 DefaultExecutor(cfg)，process_data.py:26
+Exec -> Out : Exporter(...) 保存输出参数，default_executor.py:112
+Main -> Exec : S4 run()，process_data.py:41
+Exec -> Disk : dataset_builder.load_dataset，default_executor.py:172
+Disk --> Exec : 输入样本数据集
+Exec -> Load : S5 load_ops(cfg.process)，default_executor.py:178
+Load -> Op : 注册表查类后创建实例，load.py:19
+Load --> Exec : return ops，load.py:42
+Exec -> Data : S6 dataset.process(ops)，default_executor.py:253
+loop 每个算子，dj_dataset.py:289
+  Data -> Op : S7 op.run，dj_dataset.py:303
+  Op -> Op : 继承 Filter.run，base_op.py:887
+  Op -> Disk : map 回调读取图片尺寸，shape:73-79（统计已存在时复用）
+  Disk --> Op : 图片宽高
+  Op -> Op : S8 filter 回调比较阈值，shape:90 / base_op.py:844
+  Op --> Data : return new_dataset，base_op.py:919
+end
+Data --> Exec : return dataset，dj_dataset.py:348
+Exec -> Out : S9 export(dataset)，default_executor.py:273
+Out -> Out : _export_impl -> to_jsonl -> _write_jsonl_utf8
+Out -> Disk : S10 open('w')、f.write，exporter.py:421、430/434
+alt 写入成功
+  Exec --> Main : return dataset，default_executor.py:285
+else 写入失败
+  Disk --> Out : I/O 异常，可能留下部分文件
+  Out --> Exec : 异常向上传播，无事务回滚
+end
+@enduml

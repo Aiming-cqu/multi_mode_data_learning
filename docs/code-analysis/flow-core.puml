@@ -1,0 +1,82 @@
+@startuml
+title Data-Juicer 配置 A：default 本地 JSONL 主流程（静态核对）
+start
+partition "S1 入口与配置" {
+  :S1 dj-process -> main()
+  pyproject.toml:190 / process_data.py:18;
+  :S2 init_configs()
+  process_data.py:20;
+  :读取 sys.argv，绑定 ActionConfigFile
+  config.py:847、850、107;
+  :首次 parse_args -> 重读 YAML 提取算子名
+  -> 补充参数规则 -> 完整 parse_args
+  config.py:871、877-890、894;
+  :初始化公共配置、合并算子参数并校验
+  config.py:911、914、1341;
+  if (配置解析与校验成功？) then (是)
+    :return cfg（config.py:941）;
+  else (否)
+    :解析器报告错误，正常处理流程终止
+    不生成成功导出结论;
+    stop
+  endif
+}
+partition "S2 执行器与算子加载" {
+  :S3 DefaultExecutor(cfg)，保存配置与 Exporter 实例
+  process_data.py:26 / default_executor.py:47、112;
+  :S4 executor.run()
+  process_data.py:41;
+  :配置预检、读取数据集
+  default_executor.py:159-174;
+  :S5 load_ops(cfg.process)
+  查已注册的类并创建实例，而非注册类
+  default_executor.py:178 / load.py:19;
+  :实例与数据集预检
+  default_executor.py:180-188;
+}
+partition "S3 样本统计与过滤" {
+  :S6 dataset.process(ops)
+  default_executor.py:253;
+  while (仍有算子？dataset:289) is (是)
+    :S7 op.run -> Filter.run
+    dj_dataset.py:303 / base_op.py:887;
+    :先 map(compute_stats)，批处理回调到 compute_stats_single
+    base_op.py:889、856 / image_shape_filter.py:60;
+    if (样本回调抛出异常？) then (是)
+      if (skip_op_error 为 True？) then (是)
+        :包装器记录错误并返回空批
+        base_op.py:79-83;
+      else (否)
+        :重新抛出异常，正常导出流程中断
+        base_op.py:72-74;
+        stop
+      endif
+    else (否)
+      :宽高统计保存在 stats
+      image_shape_filter.py:79-81;
+    endif
+    :再 filter(process)，批处理回调到 process_single
+    base_op.py:910、864 / image_shape_filter.py:83;
+    :S8 get_keep_boolean 比较上下限，any/all 决定样本保留
+    image_shape_filter.py:90-100 / base_op.py:844、846;
+    :返回过滤后的数据集
+    base_op.py:919;
+  endwhile (否)
+  :返回执行器 dj_dataset.py:348;
+}
+partition "S4 本地输出" {
+  :S9 exporter.export -> _export_impl -> to_jsonl
+  default_executor.py:273 / exporter.py:381、285、503;
+  :S10 _write_jsonl_utf8 -> open -> f.write
+  exporter.py:455、421、430/434;
+  if (本地写入成功？) then (是)
+    :res.jsonl 写出，执行器返回
+    default_executor.py:285;
+  else (否)
+    :异常向上传播；可能留下部分文件
+    无原子替换或事务回滚;
+    stop
+  endif
+}
+stop
+@enduml

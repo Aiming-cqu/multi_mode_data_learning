@@ -1,0 +1,15 @@
+{
+  "locator_id": 4606441,
+  "scenario_id": "20798525",
+  "base_task_id": 3628137100001282,
+  "feat_task_id": 3628130300001275,
+  "diff_type": "F2P",
+  "metrics": [
+    "dpe_collision"
+  ],
+  "locator_url": "http://10.190.55.60:8000/pages/crlocator.html?id=4606441",
+  "diff_url": "https://voyager.intra.xiaojukeji.com/static/management/#/simulation/review?reviewType=taskDiff&taskIds=3628137100001282,3628130300001275&selectedMetrics=dpe_collision",
+  "comment": "感知误检",
+  "scene_invalid": "其他（备注）",
+  "annotations": []
+}

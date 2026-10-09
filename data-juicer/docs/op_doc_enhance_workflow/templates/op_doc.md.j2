@@ -1,0 +1,43 @@
+# {{ name }}
+
+{{ desc }}
+
+Type 算子类型: **{{ type }}**
+
+Tags 标签: {{ tags | join(', ') }}
+
+## 🔧 Parameter Configuration 参数配置
+| name 参数名 | type 类型 | default 默认值 | desc 说明 |
+|--------|------|--------|------|
+{% for p in params %}
+| `{{ p.name }}` | {{ p.type }} | `{{ p.default | replace('\n', '\\n') | replace('|', '\|') }}` | {{ p.desc | replace('\n', '\\n') | replace('|', '\|') }} |
+{% endfor %}
+
+{% if examples %}
+## 📊 Effect demonstration 效果演示
+{% for example in examples %}
+### {{ example.method }}
+{% if example.op_code %}
+```python
+{{ example.op_code }}
+```
+{% endif %}
+
+#### 📥 input data 输入数据
+{{ example.input|safe }}
+
+#### 📤 output data 输出数据
+{{ example.output|safe }}
+
+{% if example.explanation %}
+#### ✨ explanation 解释
+{{ example.explanation }}
+{% endif %}
+
+{% endfor %}
+{% endif %}
+
+## 🔗 related links 相关链接
+- [source code 源代码]({{ code_links.source }})
+- [unit test 单元测试]({{ code_links.test }})
+- [Return operator list 返回算子列表](../../Operators.md)

@@ -1,0 +1,204 @@
+site_name: vlm-triage 文档
+site_author: luonairui
+site_description: 基于视觉-语言模型（VLM）的自动驾驶路测问题切面化排查与分析工具集
+repo_name: luonairui/vlm-triage
+repo_url: https://git.xiaojukeji.com/luonairui/vlm-triage
+edit_uri: tree/master/docs/
+
+docs_dir: docs
+site_dir: data/vlm-triage-docs
+
+# exclude_docs: |
+#   test.*
+
+draft_docs: |
+  drafts/
+
+watch: ["apps", "lib", "models", "scripts", "tests"]
+
+plugins:
+  - autorefs:
+      resolve_closest: true
+  - search:
+      lang:
+        - zh
+        - en
+  - gen-files:
+      scripts:
+        - scripts/gen-ref-pages.py
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: auto
+            allow_inspection: false
+            backlinks: tree  # Sponsors only!
+            docstring_section_style: table
+            group_by_category: true
+            heading_level: 1
+            inherited_members: false
+            line_length: 100
+            members_order: source
+            merge_init_into_class: true
+            overloads_only: true
+            parameter_headings: true
+            separate_signature: true
+            show_bases: false
+            show_inheritance_diagram: true  # Sponsors only!
+            show_labels: true
+            show_root_full_path: false
+            show_root_heading: true
+            show_root_members_full_path: false
+            show_root_toc_entry: true
+            show_signature_annotations: true
+            show_signature_type_parameters: true
+            show_source: true
+            show_submodules: false
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            signature_crossrefs: true
+            summary: true
+            type_parameter_headings: true
+            unwrap_annotated: true
+            extensions:
+              - griffe_pydantic: {schema: true}
+  - literate-nav:
+      nav_file: SUMMARY.md
+  - section-index
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      default_lang: python
+      line_spans: __span
+      linenums: true
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - smarty
+  - toc:
+      permalink: true
+      toc_depth: 3
+
+theme:
+  name: material
+  language: zh
+  palette:
+    # 浅色模式
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: 切换到深色模式
+    # 深色模式
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: 切换到浅色模式
+  features:
+    - content.code.annotate
+    - content.code.copy
+    - header.autohide
+    - navigation.expand
+    - navigation.instant
+    - navigation.path
+    - navigation.sections
+    - navigation.tabs
+    - navigation.top
+    - navigation.tracking
+    - search.highlight
+    - search.share
+    - search.suggest
+    - toc.follow
+    - toc.integrate
+
+nav:
+  - 首页: index.md
+  - 项目介绍:
+      - 项目概述: project-orientation.md
+      - 开发上手: onboarding.md
+      - 贡献指南: CONTRIBUTING.md
+      - 测试页: test.md
+  - Agent 系统:
+      - instructions/README.md
+      - 共享知识库: instructions/shared-knowledge.md
+      - Copilot 指令: instructions/copilot-instructions.md
+      - Cline 指令: instructions/cline-instructions.md
+      - Lingma 指令: instructions/lingma-instructions.md
+  - 开发规范:
+      - rules/README.md
+      - 编码规范: rules/coding-guidelines.md
+      - 类型注解: rules/type-annotations.md
+      - 开发圣经: guides/development-bible.md
+  - 使用技能:
+      - 技能索引: skills/README.md
+      - 项目与流程:
+          - 开始开发: skills/start-development/SKILL.md
+      - 文档治理:
+          - MkDocs 导航更新: skills/updating-mkdocs-navigation/SKILL.md
+          - 新增代码目录: skills/adding-new-code-directories/SKILL.md
+          - 秘钥泄漏检查: skills/checking-for-secret-leaks/SKILL.md
+      - 应用与服务:
+          - Streamlit 应用开发: skills/streamlit-app-development/SKILL.md
+          - tmux 服务管理: skills/serve-services-in-tmux/SKILL.md
+          - 新增 vLLM serve 脚本: skills/adding-vllm-serve-scripts/SKILL.md
+      - 数据与平台:
+          - 读取 Cooper 文档: skills/reading-cooper-documents/SKILL.md
+  - 指南:
+      - guides/README.md
+      - CR 定位服务使用指南: guides/cr-locator-service.md
+      - CR 定位标注手册: guides/cr-locator-annotation-guide.md
+      - AI 技术分享:
+          - 总览: guides/ai-tech-talks/README.md
+          - VLM → VLA: guides/ai-tech-talks/vlm-to-vla.md
+          - RAG → Skill: guides/ai-tech-talks/rag-to-skill.md
+          - Agent → OpenClaw: guides/ai-tech-talks/agent-to-openclaw.md
+          - 在线演示: guides/ai-tech-talks/online-demo.md
+  - 文档模板:
+      - templates/README.md
+      - Skill 模板: templates/skill-template.md
+      - Rule 模板: templates/rule-template.md
+      - Instruction 模板: templates/instruction-template.md
+      - Guide 模板: templates/guide-template.md
+  - 看板:
+      - kanban/README.md
+      - Features:
+          - Cooper 平台接入: kanban/features/Cooper 平台接入.md
+          - CR 定位可视化前端: kanban/features/CR 定位可视化前端.md
+          - Excel 导出功能模块: kanban/features/Excel 导出功能模块.md
+          - GPU 并发模型推理: kanban/features/GPU 并发模型推理.md
+          - LLM 聚合代理服务: kanban/features/LLM 聚合代理服务.md
+          - VL Embedding 模型探索: kanban/features/VL Embedding 模型探索.md
+          - 大模型 CR 定位: kanban/features/大模型 CR 定位.md
+      - Tasks:
+          - AI 技术分享: kanban/tasks/AI 技术分享.md
+          - Agent Tooling 模块重构: kanban/tasks/Agent Tooling 模块重构.md
+          - CR 定位传统 CV 方法探索: kanban/tasks/CR 定位传统 CV 方法探索.md
+          - CR 定位聚合算法优化: kanban/tasks/CR 定位聚合算法优化.md
+          - Human In Loop Testing Setup: kanban/tasks/Human In Loop Testing Setup.md
+          - Logging Tracing Observibility: kanban/tasks/Logging Tracing Observibility.md
+          - SOTA 模型调研: kanban/tasks/SOTA 模型调研.md
+          - Vibe Coding 体验优化: kanban/tasks/Vibe Coding 体验优化.md
+          - 文档治理: kanban/tasks/文档治理.md
+          - 测试更新: kanban/tasks/测试更新.md
+  - 代码文档: reference/
+
+extra:
+  version:
+    provider: mike

@@ -1,0 +1,3 @@
+# SCM syntax highlighting & preventing 3-way merges
+.vscode/default.code-profile merge=binary -diff
+pixi.lock merge=binary linguist-language=YAML linguist-generated=true -diff

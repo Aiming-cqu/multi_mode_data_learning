@@ -1,0 +1,130 @@
+name: 🐛 Bug Report
+description: Create a report to help us reproduce and fix the bug
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 🌍 International Community Notice
+        **This is an international community. Please use English when reporting issues to ensure the widest possible support and collaboration.**
+
+        If you're more comfortable with Chinese, we recommend using the [Q&A Copilot](https://datajuicer.github.io/data-juicer/en/main/docs_index.html) first, which supports multiple languages.
+
+  - type: checkboxes
+    attributes:
+      label: Before Reporting
+      description: >
+        Please check and try following methods to solve it by yourself before reporting.
+      options:
+        - label: >
+           I have asked the [Data-Juicer Q&A Copilot](https://datajuicer.github.io/data-juicer/en/main/docs_index.html) (available on Doc Site, DingTalk, or Discord), but the problem still persists.
+          required: true
+        - label: >
+           I have pulled the latest code of main branch to run again and the bug still existed.
+          required: true
+        - label: >
+           I have read the [README](https://github.com/datajuicer/data-juicer/blob/main/README.md) carefully and no error occurred during the installation process. (Otherwise, we recommend that you can ask a question using the Question template)
+          required: true
+
+  - type: checkboxes
+    attributes:
+      label: Search before reporting
+      description: >
+        Please search the [issues](https://github.com/datajuicer/data-juicer/issues) to see if a similar bug already exists.
+      options:
+        - label: >
+            I have searched the Data-Juicer [issues](https://github.com/datajuicer/data-juicer/issues) and found no similar bugs.
+          required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for your attention. We will try our best to solve the bug you reported, but more concrete information is necessary to reproduce the bug.
+
+  - type: markdown
+    attributes:
+      value: "## Environment Information"
+
+  - type: input
+    attributes:
+      label: OS
+      description: e.g. Ubuntu, Windows, macOS, etc.
+    validations:
+      required: true
+
+  - type: input
+    attributes:
+      label: Installation Method
+      description: e.g. from source, pip, docker image, etc.
+    validations:
+      required: true
+
+  - type: input
+    attributes:
+      label: Data-Juicer Version
+      description: e.g. latest, v1.4.6, etc.
+    validations:
+      required: false
+
+  - type: input
+    attributes:
+      label: Python Version
+      description: e.g. 3.8, 3.9, 3.10, etc.
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: "## About Bug"
+
+  - type: textarea
+    attributes:
+      label: Describe the bug
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: To Reproduce
+      description: Steps to reproduce the behavior.
+      placeholder: |
+        1. Go to '...'
+        2. Run command '...'
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Configs
+      description: If applicable, add your processing config (YAML) or recipe to help explain your problem.
+    validations:
+      required: false
+
+  - type: textarea
+    attributes:
+      label: Logs
+      description: If applicable, add log information or error traceback to help explain your problem.
+    validations:
+      required: false
+
+  - type: textarea
+    attributes:
+      label: Screenshots
+      description: If applicable, add screenshots to help explain your problem.
+    validations:
+      required: false
+
+  - type: textarea
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+    validations:
+      required: false
+
+  - type: textarea
+    attributes:
+      label: Additional Context
+      description: Anything else you would like to share?

@@ -1,0 +1,57 @@
+
+# data & resources
+outputs/
+assets/
+
+# setup
+data_juicer.egg-info/
+py_data_juicer.egg-info/
+build/
+dist
+
+# others
+.DS_Store
+.idea/
+wandb/
+__pycache__
+.vscode/
+.ipynb_checkpoints/
+
+# label studio related
+label_studio_data/
+label_studio_venv/
+label_studio_connection.json
+
+**/__dj__produced_data__/*
+venv/
+.venv/
+
+# dup files created by tests
+tests/ops/data/*dup*
+tests/tools/tmp_*/
+tests/ops/deduplicator/chinese_dedup/
+tests/ops/deduplicator/english_dedup/
+
+# temp directory for distributed Ray tests (shared between containers)
+tmp/
+
+
+# perf bench data
+perf_bench_data/
+
+# some local demo data
+demos/local/*
+
+# env file
+.env
+
+demos/local/*
+
+# cython outputs
+/data_juicer/ops/deduplicator/minhash.cpython-*
+/data_juicer/ops/deduplicator/tokenize.c
+/data_juicer/ops/deduplicator/tokenize.cpython-*
+
+# claude
+.claude/
+CLAUDE.md

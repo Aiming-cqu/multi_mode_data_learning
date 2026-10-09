@@ -1,0 +1,177 @@
+{
+  "verdict": "不可行，继续沿用当前方案",
+  "summary": {
+    "metric_count": 4,
+    "feasible": 0,
+    "partial": 0,
+    "partial_or_better": 0,
+    "not_feasible": 3,
+    "error": 1
+  },
+  "comparison": {
+    "gpu_memory": {
+      "baseline": 4981.0,
+      "candidate": 0.0,
+      "ratio": null,
+      "ratio_raw": "",
+      "objective": "minimize",
+      "status": "error",
+      "rule": {
+        "objective": "minimize",
+        "feasible_ratio": 1.0,
+        "partial_ratio": 1.2,
+        "zero_is_error": true
+      },
+      "error_reason": "candidate value is zero but metric rule marks zero as invalid"
+    },
+    "latency": {
+      "baseline": 7.611667,
+      "candidate": 37.521766,
+      "ratio": 4.929507,
+      "ratio_raw": "",
+      "objective": "minimize",
+      "status": "not_feasible",
+      "rule": {
+        "objective": "minimize",
+        "feasible_ratio": 1.0,
+        "partial_ratio": 1.2,
+        "zero_is_error": false
+      },
+      "error_reason": ""
+    },
+    "success_rate": {
+      "baseline": 1.0,
+      "candidate": 0.0,
+      "ratio": 0.0,
+      "ratio_raw": "",
+      "objective": "maximize",
+      "status": "not_feasible",
+      "rule": {
+        "objective": "maximize",
+        "feasible_ratio": 1.0,
+        "partial_ratio": 0.9,
+        "zero_is_error": false
+      },
+      "error_reason": ""
+    },
+    "throughput": {
+      "baseline": 0.187264,
+      "candidate": 0.0,
+      "ratio": 0.0,
+      "ratio_raw": "",
+      "objective": "maximize",
+      "status": "not_feasible",
+      "rule": {
+        "objective": "maximize",
+        "feasible_ratio": 1.0,
+        "partial_ratio": 0.9,
+        "zero_is_error": false
+      },
+      "error_reason": ""
+    }
+  },
+  "baseline": {
+    "latency": 7.611667,
+    "throughput": 0.187264,
+    "gpu_memory": 4981.0,
+    "success_rate": 1.0
+  },
+  "candidate": {
+    "latency": 37.521766,
+    "throughput": 0.0,
+    "gpu_memory": 0.0,
+    "success_rate": 0.0
+  },
+  "candidate_name": "vllm_loader",
+  "candidates": {
+    "vllm_loader": {
+      "candidate_name": "vllm_loader",
+      "verdict": "不可行，继续沿用当前方案",
+      "score": 0,
+      "summary": {
+        "metric_count": 4,
+        "feasible": 0,
+        "partial": 0,
+        "partial_or_better": 0,
+        "not_feasible": 3,
+        "error": 1
+      },
+      "comparison": {
+        "gpu_memory": {
+          "baseline": 4981.0,
+          "candidate": 0.0,
+          "ratio": null,
+          "ratio_raw": "",
+          "objective": "minimize",
+          "status": "error",
+          "rule": {
+            "objective": "minimize",
+            "feasible_ratio": 1.0,
+            "partial_ratio": 1.2,
+            "zero_is_error": true
+          },
+          "error_reason": "candidate value is zero but metric rule marks zero as invalid"
+        },
+        "latency": {
+          "baseline": 7.611667,
+          "candidate": 37.521766,
+          "ratio": 4.929507,
+          "ratio_raw": "",
+          "objective": "minimize",
+          "status": "not_feasible",
+          "rule": {
+            "objective": "minimize",
+            "feasible_ratio": 1.0,
+            "partial_ratio": 1.2,
+            "zero_is_error": false
+          },
+          "error_reason": ""
+        },
+        "success_rate": {
+          "baseline": 1.0,
+          "candidate": 0.0,
+          "ratio": 0.0,
+          "ratio_raw": "",
+          "objective": "maximize",
+          "status": "not_feasible",
+          "rule": {
+            "objective": "maximize",
+            "feasible_ratio": 1.0,
+            "partial_ratio": 0.9,
+            "zero_is_error": false
+          },
+          "error_reason": ""
+        },
+        "throughput": {
+          "baseline": 0.187264,
+          "candidate": 0.0,
+          "ratio": 0.0,
+          "ratio_raw": "",
+          "objective": "maximize",
+          "status": "not_feasible",
+          "rule": {
+            "objective": "maximize",
+            "feasible_ratio": 1.0,
+            "partial_ratio": 0.9,
+            "zero_is_error": false
+          },
+          "error_reason": ""
+        }
+      },
+      "candidate": {
+        "latency": 37.521766,
+        "throughput": 0.0,
+        "gpu_memory": 0.0,
+        "success_rate": 0.0
+      }
+    }
+  },
+  "ranking": [
+    {
+      "candidate": "vllm_loader",
+      "verdict": "不可行，继续沿用当前方案",
+      "score": 0
+    }
+  ],
+  "recommended_candidate": "vllm_loader"
+}

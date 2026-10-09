@@ -1,0 +1,6 @@
+{
+  "server_url": "http://localhost:7070",
+  "api_token": "REDACTED",
+  "username": "admin@example.com",
+  "password": "REDACTED"
+}

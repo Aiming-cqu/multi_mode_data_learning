@@ -1,0 +1,64 @@
+name: 🚀 Feature Request
+description: Suggest a Data-Juicer idea
+# title: " "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 🌍 International Community Notice
+        **This is an international community. Please use English when submitting feature requests to ensure the widest possible support and collaboration.**
+
+        Thank you for submitting a Data-Juicer Feature Request!
+
+  - type: checkboxes
+    attributes:
+      label: Before Submitting
+      description: >
+        Please check the following before submitting your feature request.
+      options:
+        - label: >
+           I have asked the [Data-Juicer Q&A Copilot](https://datajuicer.github.io/data-juicer/en/main/docs_index.html) (available on Doc Site, DingTalk, or Discord) about this feature, but still want to submit it as a formal request.
+          required: false
+        - label: >
+           I have searched the Data-Juicer [issues](https://github.com/datajuicer/data-juicer/issues) and found no similar feature requests.
+          required: true
+
+  - type: textarea
+    attributes:
+      label: Description
+      description: A short description of your feature request.
+      placeholder: |
+        What new feature would you like to see in Data-Juicer? (e.g., a new operator, recipe enhancement, performance improvement, etc.)
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Use Case
+      description: |
+        Describe the use case of your feature request. It will help us understand and prioritize the feature request.
+      placeholder: |
+        How would this feature be used, and who would use it? What problem does it solve?
+
+  - type: textarea
+    attributes:
+      label: Proposed Solution
+      description: If you have ideas on how to implement this feature, please share them here.
+      placeholder: |
+        Describe your proposed approach or implementation ideas.
+
+  - type: textarea
+    attributes:
+      label: Additional Context
+      description: Anything else you would like to share?
+      placeholder: |
+        Additional information, examples, or references.
+
+  - type: checkboxes
+    attributes:
+      label: Are you willing to submit a PR for this feature?
+      description: >
+        (Optional) We encourage you to submit a [Pull Request](https://github.com/datajuicer/data-juicer/pulls) (PR) to help improve Data-Juicer for everyone, especially if you have a good understanding of how to implement a fix or feature.
+      options:
+        - label: Yes I'd like to help by submitting a PR!

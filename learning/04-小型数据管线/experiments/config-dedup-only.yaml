@@ -1,0 +1,12 @@
+# 配置 A：min_width = 340
+# 运行： cd data-juicer && .venv/bin/dj-process --config "../learning/04-小型数据管线/experiments/config-shape-dedup.yaml"
+project_name: 'size-filter-and-duplicate'
+dataset_path: '../learning/04-小型数据管线/experiments/input.jsonl'
+export_path: '.outputs/dedup-only/res.jsonl'
+np: 1
+
+process:
+  - image_deduplicator:
+      method: phash
+      consider_text: false
+  

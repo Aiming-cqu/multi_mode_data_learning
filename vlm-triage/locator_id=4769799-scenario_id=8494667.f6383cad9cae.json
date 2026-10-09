@@ -1,0 +1,15 @@
+{
+  "locator_id": 4769799,
+  "scenario_id": "8494667",
+  "base_task_id": 3699942100000341,
+  "feat_task_id": 3699942300000345,
+  "diff_type": "P2F",
+  "metrics": [
+    "dpe_collision"
+  ],
+  "locator_url": "http://10.190.55.60:8000/pages/crlocator.html?id=4769799",
+  "diff_url": "https://voyager.intra.xiaojukeji.com/static/management/#/simulation/review?reviewType=taskDiff&taskIds=3699942100000341,3699942300000345&selectedMetrics=dpe_collision",
+  "comment": "端到端从截图看不懂",
+  "scene_invalid": "端到端无效",
+  "annotations": []
+}

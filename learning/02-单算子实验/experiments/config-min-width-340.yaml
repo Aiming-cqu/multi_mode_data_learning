@@ -1,0 +1,11 @@
+# 配置 A：min_width = 340
+# 运行： cd data-juicer && .venv/bin/dj-process --config ../../learning/02-单算子实验/experiments/config-min-width-340.yaml
+project_name: 'size-filter-340'
+dataset_path: './demos/data/demo-dataset-images.jsonl'
+export_path: './outputs/size-filter-340/res.jsonl'
+np: 1
+
+process:
+  - image_shape_filter:
+      min_width: 340
+      min_height: 1

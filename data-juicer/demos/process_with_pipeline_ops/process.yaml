@@ -1,0 +1,31 @@
+# Process config example for dataset
+
+# global parameters
+project_name: 'pipeline-demo'
+dataset_path: './demos/data/demo-dataset-annotation-human-preference.jsonl'  # path to your dataset directory or file
+np: 4  # number of subprocess to process your dataset
+
+export_path: './outputs/demo-process/demo-processed.jsonl'
+executor_type: 'ray'
+ray_address: 'auto'  
+
+# process schedule
+# filter query prompt by length, then use llm to generate response, finally filter response by language id score
+process:
+  - text_length_filter:
+      min_length: 2
+      max_length: 1000
+      text_key: 'prompt'
+  - llm_ray_vllm_engine_pipeline:
+      api_or_hf_model: 'Qwen/Qwen2.5-7B-Instruct'
+      is_hf_model: true
+      system_prompt: ''
+      accelerator_type: 'A10'
+      sampling_params: {temperature: 0.0, top_p: 0.9, max_new_tokens: 512}
+      engine_kwargs: {max_model_len: 4096, tensor_parallel_size: 1, pipeline_parallel_size: 1}
+      query_key: 'prompt'
+      response_key: 'response'  # new key to store llm response
+  - language_id_score_filter:
+      lang: 'zh'
+      min_score: 0.8
+      text_key: 'response'

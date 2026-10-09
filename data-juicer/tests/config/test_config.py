@@ -1,0 +1,1479 @@
+import os
+import sys
+import copy
+import unittest
+import tempfile
+import yaml
+from contextlib import redirect_stdout, redirect_stderr
+from io import StringIO
+
+from jsonargparse import Namespace, namespace_to_dict
+
+from data_juicer.config import init_configs, get_default_cfg, validate_work_dir_config, resolve_job_id, resolve_job_directories, update_op_attr, export_config, merge_config, prepare_side_configs
+from data_juicer.ops import load_ops
+from data_juicer.utils.unittest_utils import DataJuicerTestCaseBase, TEST_TAG
+from data_juicer.utils.constant import RAY_JOB_ENV_VAR
+
+
+test_yaml_path = os.path.join(os.path.dirname(os.path.realpath(__file__)),
+                              'demo_4_test.yaml')
+
+test_bad_yaml_path = os.path.join(os.path.dirname(os.path.realpath(__file__)),
+                                  'demo_4_test_bad_val.yaml')
+
+test_text_keys_yaml_path = os.path.join(os.path.dirname(os.path.realpath(__file__)),
+                                        'demo_4_test_multiple_text_keys.yaml')
+
+test_same_ops_yaml_path = os.path.join(os.path.dirname(os.path.realpath(__file__)),
+                                       'demo_4_test_same_ops.yaml')
+
+WORKDIR = os.path.join(os.getcwd(), 'outputs/demo')
+
+class ConfigTest(DataJuicerTestCaseBase):
+
+    def setUp(self) -> None:
+        super().setUp()
+
+        self.tmp_dir = 'tmp/test_config/'
+        os.makedirs(self.tmp_dir, exist_ok=True)
+
+    def tearDown(self) -> None:
+        super().tearDown()
+
+        if os.path.exists(self.tmp_dir):
+            os.system(f'rm -rf {self.tmp_dir}')
+
+        os.environ[RAY_JOB_ENV_VAR] = "0"
+
+    def test_help_info(self):
+        out = StringIO()
+        with redirect_stdout(out), self.assertRaises(SystemExit):
+            _ = init_configs(args=['--help'])
+        out_str = out.getvalue()
+        # self.assertIn('usage:', out_str, 'lacks message for command beginning')
+        self.assertIn('--config CONFIG', out_str,
+                      'lacks message for positional argument')
+        self.assertIn('--project_name PROJECT_NAME', out_str,
+                      'lacks message for optional argument')
+        self.assertIn(
+            'Number of processes to process dataset. (type:', out_str,
+            'the help message of `np` argument does not show as expected')
+
+    def test_yaml_cfg_file(self):
+        out = StringIO()
+        with redirect_stdout(out):
+            cfg = init_configs(args=f'--config {test_yaml_path}'.split())
+            self.assertIsInstance(cfg, Namespace)
+            self.assertEqual(cfg.project_name, 'test_demo')
+
+            # work_dir now includes job_id suffix due to resolve_job_directories
+            expected_work_dir = cfg.work_dir
+            self.assertDictEqual(
+                cfg.process[0], {
+                    'whitespace_normalization_mapper': {
+                        'text_key': 'text',
+                        'image_key': 'images',
+                        'image_bytes_key': 'image_bytes',
+                        'audio_key': 'audios',
+                        'video_key': 'videos',
+                        'system_key': 'system',
+                        'instruction_key': 'instruction',
+                        'prompt_key': 'prompt',
+                        'query_key': 'query',
+                        'response_key': 'response',
+                        'history_key': 'history',
+                        'accelerator': None,
+                        'num_proc': 4,
+                        'num_cpus': None,
+                        'memory': None,
+                        'num_gpus': None,
+                        'turbo': False,
+                        'index_key': None,
+                        'skip_op_error': True,
+                        'work_dir': expected_work_dir,
+                        'cpu_required': None,
+                        'gpu_required': None,
+                        'mem_required': None,
+                        'ray_execution_mode': None,
+                        'runtime_env': None,
+                        'batch_mode': None,
+                        'auto_op_parallelism': True
+                    }
+                }, 'nested dict load fail, for nonparametric op')
+            self.assertDictEqual(
+                cfg.process[1], {
+                    'language_id_score_filter': {
+                        'lang': 'zh',
+                        'min_score': 0.8,
+                        'text_key': 'text',
+                        'image_key': 'images',
+                        'image_bytes_key': 'image_bytes',
+                        'audio_key': 'audios',
+                        'video_key': 'videos',
+                        'system_key': 'system',
+                        'instruction_key': 'instruction',
+                        'prompt_key': 'prompt',
+                        'query_key': 'query',
+                        'response_key': 'response',
+                        'history_key': 'history',
+                        'min_closed_interval': True,
+                        'max_closed_interval': True,
+                        'reversed_range': False,
+                        'accelerator': None,
+                        'num_proc': 4,
+                        'stats_export_path': None,
+                        'num_cpus': None,
+                        'memory': None,
+                        'turbo': False,
+                        'num_gpus': None,
+                        'index_key': None,
+                        'skip_op_error': True,
+                        'work_dir': expected_work_dir,
+                        'cpu_required': None,
+                        'gpu_required': None,
+                        'mem_required': None,
+                        'ray_execution_mode': None,
+                        'runtime_env': None,
+                        'batch_mode': None,
+                        'auto_op_parallelism': True
+                    }
+                }, 'nested dict load fail, un-expected internal value')
+
+            ops_from_cfg = load_ops(cfg.process)
+            self.assertTrue(len(ops_from_cfg) == 4)
+
+    def test_val_range_check_cmd(self):
+        out = StringIO()
+        err_msg_head = ("remove_table_text_mapper.min_col")
+        err_msg = ("Input should be greater than or equal to 2")
+        with redirect_stdout(out), redirect_stderr(out):
+            with self.assertRaises(SystemExit) as cm:
+                init_configs(
+                    args=f'--config {test_yaml_path} '
+                          '--remove_table_text_mapper.min_col 1'.split())
+            self.assertEqual(cm.exception.code, 2)
+        out_str = out.getvalue()
+        self.assertIn(err_msg_head, out_str)
+        self.assertIn(err_msg, out_str)
+
+    def _test_val_range_check_yaml(self):
+        out = StringIO()
+        err_msg_head = ("remove_table_text_mapper.max_col")
+        err_msg = ("Input should be less than or equal to 20")
+        with redirect_stdout(out), redirect_stderr(out):
+            with self.assertRaises(SystemExit) as cm:
+                init_configs(args=f'--config {test_bad_yaml_path}'.split())
+            self.assertEqual(cm.exception.code, 2)
+        out_str = out.getvalue()
+        self.assertIn(err_msg_head, out_str)
+        self.assertIn(err_msg, out_str)
+
+    def test_mixture_cfg(self):
+        out = StringIO()
+        with redirect_stdout(out):
+            ori_cfg = init_configs(args=f'--config {test_yaml_path}'.split())
+            mixed_cfg_1 = init_configs(
+                args=f'--config {test_yaml_path} '
+                '--language_id_score_filter.lang en'.split())
+            mixed_cfg_2 = init_configs(
+                args=f'--config {test_yaml_path} '
+                '--language_id_score_filter.lang=fr'.split())
+            mixed_cfg_3 = init_configs(
+                args=f'--config {test_yaml_path} '
+                '--language_id_score_filter.lang zh '
+                '--language_id_score_filter.min_score 0.6'.split())
+            mixed_cfg_4 = init_configs(
+                args=f'--config {test_yaml_path} '
+                '--language_id_score_filter.lang=en '
+                '--language_id_score_filter.min_score=0.5'.split())
+            print(f'ori_cfg.process[1] = {ori_cfg.process[1]}')
+            # work_dir now includes job_id suffix due to resolve_job_directories
+            expected_work_dir = ori_cfg.work_dir
+            self.assertDictEqual(
+                ori_cfg.process[1], {
+                    'language_id_score_filter': {
+                        'lang': 'zh',
+                        'min_score': 0.8,
+                        'text_key': 'text',
+                        'image_key': 'images',
+                        'image_bytes_key': 'image_bytes',
+                        'system_key': 'system',
+                        'instruction_key': 'instruction',
+                        'prompt_key': 'prompt',
+                        'audio_key': 'audios',
+                        'video_key': 'videos',
+                        'query_key': 'query',
+                        'response_key': 'response',
+                        'history_key': 'history',
+                        'min_closed_interval': True,
+                        'max_closed_interval': True,
+                        'reversed_range': False,
+                        'accelerator': None,
+                        'num_proc': 4,
+                        'stats_export_path': None,
+                        'num_cpus': None,
+                        'memory': None,
+                        'num_gpus': None,
+                        'turbo': False,
+                        'index_key': None,
+                        'skip_op_error': True,
+                        'work_dir': expected_work_dir,
+                        'cpu_required': None,
+                        'gpu_required': None,
+                        'mem_required': None,
+                        'ray_execution_mode': None,
+                        'runtime_env': None,
+                        'batch_mode': None,
+                        'auto_op_parallelism': True
+                    }
+                })
+            # work_dir now includes job_id suffix due to resolve_job_directories
+            expected_work_dir_1 = mixed_cfg_1.work_dir
+            self.assertDictEqual(
+                mixed_cfg_1.process[1], {
+                    'language_id_score_filter': {
+                        'lang': 'en',
+                        'min_score': 0.8,
+                        'text_key': 'text',
+                        'image_key': 'images',
+                        'image_bytes_key': 'image_bytes',
+                        'audio_key': 'audios',
+                        'video_key': 'videos',
+                        'system_key': 'system',
+                        'instruction_key': 'instruction',
+                        'prompt_key': 'prompt',
+                        'query_key': 'query',
+                        'response_key': 'response',
+                        'history_key': 'history',
+                        'min_closed_interval': True,
+                        'max_closed_interval': True,
+                        'reversed_range': False,
+                        'accelerator': None,
+                        'num_proc': 4,
+                        'stats_export_path': None,
+                        'num_cpus': None,
+                        'memory': None,
+                        'turbo': False,
+                        'num_gpus': None,
+                        'index_key': None,
+                        'skip_op_error': True,
+                        'work_dir': expected_work_dir_1,
+                        'cpu_required': None,
+                        'gpu_required': None,
+                        'mem_required': None,
+                        'ray_execution_mode': None,
+                        'runtime_env': None,
+                        'batch_mode': None,
+                        'auto_op_parallelism': True
+                    }
+                })
+            # work_dir now includes job_id suffix due to resolve_job_directories
+            expected_work_dir_2 = mixed_cfg_2.work_dir
+            self.assertDictEqual(
+                mixed_cfg_2.process[1], {
+                    'language_id_score_filter': {
+                        'lang': 'fr',
+                        'min_score': 0.8,
+                        'text_key': 'text',
+                        'image_key': 'images',
+                        'image_bytes_key': 'image_bytes',
+                        'audio_key': 'audios',
+                        'video_key': 'videos',
+                        'system_key': 'system',
+                        'instruction_key': 'instruction',
+                        'prompt_key': 'prompt',
+                        'query_key': 'query',
+                        'response_key': 'response',
+                        'history_key': 'history',
+                        'min_closed_interval': True,
+                        'max_closed_interval': True,
+                        'reversed_range': False,
+                        'accelerator': None,
+                        'num_proc': 4,
+                        'stats_export_path': None,
+                        'num_cpus': None,
+                        'memory': None,
+                        'turbo': False,
+                        'num_gpus': None,
+                        'index_key': None,
+                        'skip_op_error': True,
+                        'work_dir': expected_work_dir_2,
+                        'cpu_required': None,
+                        'gpu_required': None,
+                        'mem_required': None,
+                        'ray_execution_mode': None,
+                        'runtime_env': None,
+                        'batch_mode': None,
+                        'auto_op_parallelism': True
+                    }
+                })
+            # work_dir now includes job_id suffix due to resolve_job_directories
+            expected_work_dir_3 = mixed_cfg_3.work_dir
+            self.assertDictEqual(
+                mixed_cfg_3.process[1], {
+                    'language_id_score_filter': {
+                        'lang': 'zh',
+                        'min_score': 0.6,
+                        'text_key': 'text',
+                        'image_key': 'images',
+                        'image_bytes_key': 'image_bytes',
+                        'audio_key': 'audios',
+                        'video_key': 'videos',
+                        'system_key': 'system',
+                        'instruction_key': 'instruction',
+                        'prompt_key': 'prompt',
+                        'query_key': 'query',
+                        'response_key': 'response',
+                        'history_key': 'history',
+                        'min_closed_interval': True,
+                        'max_closed_interval': True,
+                        'reversed_range': False,
+                        'accelerator': None,
+                        'num_proc': 4,
+                        'stats_export_path': None,
+                        'num_cpus': None,
+                        'memory': None,
+                        'turbo': False,
+                        'num_gpus': None,
+                        'index_key': None,
+                        'skip_op_error': True,
+                        'work_dir': expected_work_dir_3,
+                        'cpu_required': None,
+                        'gpu_required': None,
+                        'mem_required': None,
+                        'ray_execution_mode': None,
+                        'runtime_env': None,
+                        'batch_mode': None,
+                        'auto_op_parallelism': True
+                    }
+                })
+            # work_dir now includes job_id suffix due to resolve_job_directories
+            expected_work_dir_4 = mixed_cfg_4.work_dir
+            self.assertDictEqual(
+                mixed_cfg_4.process[1], {
+                    'language_id_score_filter': {
+                        'lang': 'en',
+                        'min_score': 0.5,
+                        'text_key': 'text',
+                        'image_key': 'images',
+                        'image_bytes_key': 'image_bytes',
+                        'audio_key': 'audios',
+                        'video_key': 'videos',
+                        'system_key': 'system',
+                        'instruction_key': 'instruction',
+                        'prompt_key': 'prompt',
+                        'query_key': 'query',
+                        'response_key': 'response',
+                        'history_key': 'history',
+                        'min_closed_interval': True,
+                        'max_closed_interval': True,
+                        'reversed_range': False,
+                        'accelerator': None,
+                        'num_proc': 4,
+                        'stats_export_path': None,
+                        'num_cpus': None,
+                        'memory': None,
+                        'turbo': False,
+                        'num_gpus': None,
+                        'index_key': None,
+                        'skip_op_error': True,
+                        'work_dir': expected_work_dir_4,
+                        'cpu_required': None,
+                        'gpu_required': None,
+                        'mem_required': None,
+                        'ray_execution_mode': None,
+                        'runtime_env': None,
+                        'batch_mode': None,
+                        'auto_op_parallelism': True
+                    }
+                })
+
+    def test_op_params_parsing(self):
+        from jsonargparse import ArgumentParser
+        from data_juicer.config.config import (sort_op_by_types_and_names, _collect_config_info_from_class_docs)
+        from data_juicer.ops.base_op import OPERATORS
+
+        base_class_params = {
+            'text_key', 'image_key', 'image_bytes_key', 'audio_key', 'video_key', 'query_key', 'response_key',
+            'history_key', 'accelerator', 'turbo', 'batch_size', 'num_proc', 'num_cpus', 'memory', 'work_dir',
+        }
+
+        parser = ArgumentParser(default_env=True, default_config_files=None)
+        ops_sorted_by_types = sort_op_by_types_and_names(
+            OPERATORS.modules.items())
+        op_params = _collect_config_info_from_class_docs(ops_sorted_by_types,
+                                                         parser)
+
+        for op_name, params in op_params.items():
+            for base_param in base_class_params:
+                base_param_key = f'{op_name}.{base_param}'
+                self.assertIn(base_param_key, params)
+
+    def test_get_default_cfg(self):
+        """Test getting default configuration from config_min.yaml"""
+        # Get default config
+        cfg = get_default_cfg()
+        
+        # Verify basic default values
+        self.assertIsInstance(cfg, Namespace)
+        
+        # Test essential defaults
+        self.assertEqual(cfg.executor_type, 'default')
+        self.assertEqual(cfg.ray_address, 'auto')
+        self.assertEqual(cfg.text_keys, 'text')
+        self.assertEqual(cfg.export_path, './outputs/')
+        self.assertEqual(cfg.suffixes, None)
+        
+        # Test default values are of correct type
+        self.assertIsInstance(cfg.executor_type, str)
+        self.assertIsInstance(cfg.export_path, str)
+
+    def test_cli_override(self):
+        """Test that command line arguments correctly override YAML config values."""
+        out = StringIO()
+        with redirect_stdout(out):
+            # Test with multiple operators and nested parameters
+            cfg = init_configs(args=[
+                '--config', test_yaml_path,
+                '--language_id_score_filter.lang', 'en',
+                '--language_id_score_filter.min_score', '0.5',
+                '--whitespace_normalization_mapper.batch_size', '2000',
+                '--remove_table_text_mapper.min_col', '3'
+            ])
+
+            # Verify language_id_score_filter overrides
+            lang_filter = next(op for op in cfg.process if 'language_id_score_filter' in op)
+            self.assertEqual(lang_filter['language_id_score_filter']['lang'], 'en')
+            self.assertEqual(lang_filter['language_id_score_filter']['min_score'], 0.5)
+
+            # Verify whitespace_normalization_mapper override
+            whitespace_mapper = next(op for op in cfg.process if 'whitespace_normalization_mapper' in op)
+            self.assertEqual(whitespace_mapper['whitespace_normalization_mapper']['batch_size'], 2000)
+
+            # Verify remove_table_text_mapper override
+            table_mapper = next(op for op in cfg.process if 'remove_table_text_mapper' in op)
+            self.assertEqual(table_mapper['remove_table_text_mapper']['min_col'], 3)
+
+            # Verify other parameters remain unchanged
+            self.assertEqual(whitespace_mapper['whitespace_normalization_mapper']['text_key'], 'text')
+            self.assertEqual(lang_filter['language_id_score_filter']['text_key'], 'text')
+
+    def test_cli_override_with_equals(self):
+        """Test command line overrides using equals sign syntax."""
+        out = StringIO()
+        with redirect_stdout(out):
+            cfg = init_configs(args=[
+                '--config', test_yaml_path,
+                '--language_id_score_filter.lang=en',
+                '--language_id_score_filter.min_score=0.5',
+                '--whitespace_normalization_mapper.batch_size=2000'
+            ])
+
+            # Verify overrides
+            lang_filter = next(op for op in cfg.process if 'language_id_score_filter' in op)
+            self.assertEqual(lang_filter['language_id_score_filter']['lang'], 'en')
+            self.assertEqual(lang_filter['language_id_score_filter']['min_score'], 0.5)
+
+            whitespace_mapper = next(op for op in cfg.process if 'whitespace_normalization_mapper' in op)
+            self.assertEqual(whitespace_mapper['whitespace_normalization_mapper']['batch_size'], 2000)
+
+    def test_cli_override_invalid_value(self):
+        """Test that invalid command line override values are properly caught."""
+        out = StringIO()
+        with redirect_stdout(out), redirect_stderr(out):
+            with self.assertRaises(SystemExit) as cm:
+                init_configs(args=[
+                    '--config', test_yaml_path,
+                    '--language_id_score_filter.min_score', 'invalid'  # Should be a float
+                ])
+            self.assertEqual(cm.exception.code, 2)
+            out_str = out.getvalue()
+            self.assertIn('language_id_score_filter.min_score', out_str)
+            self.assertIn('float', out_str)
+
+    def test_auto_mode(self):
+        out = StringIO()
+        with redirect_stdout(out):
+            # not in analyzer
+            with self.assertRaises(NotImplementedError):
+                init_configs(args=[
+                    '--auto',
+                ], allow_auto=False)
+
+            # in analyzer
+            cfg_auto = init_configs(args=[
+                '--auto',
+            ], allow_auto=True)
+            self.assertTrue(cfg_auto.auto)
+            self.assertGreater(len(cfg_auto.process), 0)
+
+    def test_debug_mode(self):
+        out = StringIO()
+        with redirect_stdout(out):
+            cfg = init_configs(args=[
+                '--config', test_yaml_path,
+                '--debug',
+            ])
+            self.assertEqual(cfg.debug, True)
+
+    def test_different_np(self):
+        out = StringIO()
+        with redirect_stdout(out):
+            # too many
+            cfg = init_configs(args=[
+                '--config', test_yaml_path,
+                '--np', f'{os.cpu_count() + 100}',
+            ])
+            self.assertEqual(cfg.np, os.cpu_count())
+
+    def test_op_fusion(self):
+        out = StringIO()
+        with redirect_stdout(out):
+            with self.assertRaises(NotImplementedError):
+                init_configs(args=[
+                    '--config', test_yaml_path,
+                    '--op_fusion', 'True',
+                    '--fusion_strategy', 'invalid',
+                ])
+
+    def test_multiple_text_keys(self):
+        out = StringIO()
+        with redirect_stdout(out):
+            cfg = init_configs(args=[
+                '--config', test_text_keys_yaml_path,
+            ])
+            self.assertEqual(cfg.text_keys, ['text1', 'text2'])
+            first_op = cfg.process[0]
+            first_op_name = list(first_op.keys())[0]
+            self.assertEqual(first_op[first_op_name]['text_key'], 'text1')
+
+    def test_update_op_attr(self):
+        ori_ops = [
+            {'text_mapper': {'text_key': 'text'}},
+            {'language_id_score_filter': {'lang': 'en', 'min_score': 0.5}},
+            {'whitespace_normalization_mapper': {'batch_size': 2000}},
+            {'remove_table_text_mapper': {'min_col': 3}}
+        ]
+        op_attrs = {
+            'text_key': 'text2'
+        }
+        res_ops = update_op_attr(ori_ops, op_attrs)
+        self.assertEqual(res_ops, [
+            {'text_mapper': {'text_key': 'text'}},
+            {'language_id_score_filter': {'lang': 'en', 'min_score': 0.5, 'text_key': 'text2'}},
+            {'whitespace_normalization_mapper': {'batch_size': 2000, 'text_key': 'text2'}},
+            {'remove_table_text_mapper': {'min_col': 3, 'text_key': 'text2'}}
+        ])
+
+        self.assertEqual(update_op_attr(ori_ops, None), ori_ops)
+
+    def test_same_ops(self):
+        out = StringIO()
+        with redirect_stdout(out):
+            cfg = init_configs(args=[
+                '--config', test_same_ops_yaml_path,
+            ])
+            op_name_groups = {}
+            for op_cfg in cfg.process:
+                op_name = list(op_cfg.keys())[0]
+                op_name_groups.setdefault(op_name, []).append(op_cfg)
+            self.assertEqual(len(op_name_groups['language_id_score_filter']), 2)
+            self.assertEqual(op_name_groups['language_id_score_filter'][0]['language_id_score_filter']['lang'], 'zh')
+            self.assertEqual(op_name_groups['language_id_score_filter'][1]['language_id_score_filter']['lang'], 'en')
+
+    def test_export_config(self):
+        out = StringIO()
+        with redirect_stdout(out):
+            cfg = init_configs(args=[
+                '--config', test_yaml_path,
+            ])
+            export_path = os.path.join(self.tmp_dir, 'export_config.json')
+            export_config(cfg, export_path, format='json', skip_none=False)
+            self.assertTrue(os.path.exists(export_path))
+            import json
+            exported_json = json.load(open(export_path))
+            if isinstance(cfg, Namespace):
+                cfg = namespace_to_dict(cfg)
+            for key in exported_json:
+                self.assertIn(key, cfg)
+                self.assertEqual(exported_json[key], cfg[key])
+
+    def test_merge_config(self):
+        ori_cfg = Namespace({
+            'export_path': os.path.join(self.tmp_dir, 'res.jsonl'),
+            'work_dir': self.tmp_dir,
+            'process': [
+                {'text_mapper': {'text_key': 'text'}},
+                {'language_id_score_filter': {'lang': 'en', 'min_score': 0.5}},
+                {'whitespace_normalization_mapper': {'batch_size': 2000}},
+                {'remove_table_text_mapper': {'min_col': 3}}
+            ]
+        })
+        new_cfg = Namespace({
+            'process': [
+                {'text_mapper': {'text_key': 'text2'}},
+                {'language_id_score_filter': {'lang': 'zh'}},
+                {'whitespace_normalization_mapper': {'batch_size': 2000}},
+                {'remove_table_text_mapper': {'min_col': 3}}
+            ]
+        })
+        res_cfg = merge_config(ori_cfg, new_cfg)
+        for i, op in enumerate(res_cfg.process):
+            op_name = list(op.keys())[0]
+            op_cfg = op[op_name]
+            ori_op_cfg = ori_cfg.process[i][op_name]
+            new_op_cfg = new_cfg.process[i][op_name]
+            for key in op_cfg:
+                if key in ori_op_cfg:
+                    self.assertEqual(op_cfg[key], ori_op_cfg[key])
+                else:
+                    self.assertEqual(op_cfg[key], new_op_cfg[key])
+
+    def test_prepare_side_configs(self):
+        out = StringIO()
+        with redirect_stdout(out):
+            cfg = prepare_side_configs(test_yaml_path)
+            self.assertEqual(cfg['np'], 4)
+
+            cfg = prepare_side_configs({'key': 'value'})
+            self.assertEqual(cfg['key'], 'value')
+
+            with self.assertRaises(TypeError):
+                prepare_side_configs(1)
+
+            with self.assertRaises(TypeError):
+                prepare_side_configs('xxx.txt')
+
+    def test_cli_custom_operator_paths(self):
+        """Test arg custom_operator_paths"""
+
+        new_ops_dir = f'{WORKDIR}/custom_ops'
+        new_op_path1 = os.path.join(new_ops_dir, 'new_op1.py')
+        new_op_path2 = os.path.join(new_ops_dir, 'test_dir_module/new_op2.py')
+        os.makedirs(os.path.dirname(new_op_path1), exist_ok=True)
+        os.makedirs(os.path.dirname(new_op_path2), exist_ok=True)
+
+        with open(new_op_path1, 'w') as f:
+            f.write("""
+from data_juicer.ops.base_op import OPERATORS, Mapper
+                                              
+@OPERATORS.register_module('custom_mapper1')
+class CustomMapper1(Mapper):
+    def process_single(self, data):
+        return data
+""")
+        with open(new_op_path2, 'w') as f:
+            f.write("""
+from data_juicer.ops.base_op import OPERATORS, Mapper
+                                              
+@OPERATORS.register_module('custom_mapper2')
+class CustomMapper2(Mapper):
+    def process_single(self, data):
+        return data
+""")
+            
+        with open(os.path.join(os.path.dirname(new_op_path2), '__init__.py'), 'w') as f:
+            f.write("""
+from . import new_op2
+""")
+
+        init_configs(args=[
+            '--config', test_yaml_path,
+            '--custom-operator-paths', new_op_path1, os.path.dirname(new_op_path2)
+        ])
+        from data_juicer.ops.base_op import OPERATORS
+        self.assertIn('custom_mapper1', list(OPERATORS.modules.keys()))
+        self.assertIn('custom_mapper2', list(OPERATORS.modules.keys()))
+        
+        OPERATORS.modules.pop('custom_mapper1')
+        OPERATORS.modules.pop('custom_mapper2')
+
+    # TODO: TEST_TAG("ray ") and RayExecutor will repeatedly execute ray init, 
+    # resulting in the custom module not being found
+    # @TEST_TAG("ray")
+    @unittest.skip('affect other test cases')
+    def test_cli_custom_operator_paths_ray(self):
+        """Test arg custom_operator_paths"""
+
+        new_ops_dir = f'{WORKDIR}/custom_ops'
+        new_op_path1 = os.path.join(new_ops_dir, 'new_op3.py')
+        new_op_path2 = os.path.join(new_ops_dir, 'test_dir_module2/new_op4.py')
+        os.makedirs(os.path.dirname(new_op_path1), exist_ok=True)
+        os.makedirs(os.path.dirname(new_op_path2), exist_ok=True)
+        tmp_yaml_path = f'{WORKDIR}/demo_4_test_ray_tmp.yaml'
+        
+        with open(tmp_yaml_path, 'w') as f:
+            f.write("""
+project_name: 'test_demo'
+dataset_path: './demos/data/demo-dataset.jsonl'
+executor_type: ray
+ray_address: auto
+export_path: './outputs/demo/demo-processed.parquet'
+process:
+  - custom_mapper3:
+  - custom_mapper4:
+""")
+
+        with open(new_op_path1, 'w') as f:
+            f.write("""
+from data_juicer.ops.base_op import OPERATORS, Mapper
+                                              
+@OPERATORS.register_module('custom_mapper3')
+class CustomMapper3(Mapper):
+    def process_single(self, data):
+        data['text'] += 'tag1'
+        return data
+""")
+        with open(new_op_path2, 'w') as f:
+            f.write("""
+from data_juicer.ops.base_op import OPERATORS, Mapper
+                                              
+@OPERATORS.register_module('custom_mapper4')
+class CustomMapper4(Mapper):
+    def process_single(self, data):
+        data['text'] += 'tag2'
+        return data
+""")
+            
+        with open(os.path.join(os.path.dirname(new_op_path2), '__init__.py'), 'w') as f:
+            f.write("""
+from . import new_op4
+""")
+
+        cfg = init_configs(args=[
+            '--config', tmp_yaml_path,
+            '--custom-operator-paths', new_op_path1, os.path.dirname(new_op_path2)
+        ])
+        from data_juicer.core.executor.ray_executor import RayExecutor
+
+        executor = RayExecutor(cfg)
+        ds = executor.run()
+        for data in ds.to_list():
+            self.assertTrue(data['text'].endswith('tag1tag2'))
+
+        os.environ[RAY_JOB_ENV_VAR] = "0"
+
+    def test_validate_work_dir_config_valid_cases(self):
+        """Test validate_work_dir_config with valid configurations."""
+        valid_configs = [
+            './outputs/my_project/{job_id}',
+            '/data/experiments/{job_id}',
+            'outputs/{job_id}',
+            './{job_id}',
+            'C:/data/projects/{job_id}',
+            '/home/user/data/{job_id}',
+            'relative/path/to/{job_id}',
+            '{job_id}',  # Just job_id alone
+        ]
+        
+        for work_dir in valid_configs:
+            with self.subTest(work_dir=work_dir):
+                # Should not raise any exception
+                validate_work_dir_config(work_dir)
+
+    def test_validate_work_dir_config_invalid_cases(self):
+        """Test validate_work_dir_config with invalid configurations."""
+        invalid_configs = [
+            './outputs/{job_id}/results',
+            './{job_id}/outputs/data',
+            'outputs/{job_id}/intermediate/stuff',
+            'data/{job_id}/processed/results',
+            '/home/user/{job_id}/data/outputs',
+            'C:/data/{job_id}/projects/results',
+            'relative/{job_id}/path/to/data',
+            'outputs/data/{job_id}/processed',
+        ]
+        
+        for work_dir in invalid_configs:
+            with self.subTest(work_dir=work_dir):
+                with self.assertRaises(ValueError) as cm:
+                    validate_work_dir_config(work_dir)
+                
+                # Check that the error message is helpful
+                error_msg = str(cm.exception)
+                self.assertIn('{job_id}', error_msg)
+                self.assertIn('must be the last part', error_msg)
+                self.assertIn('Expected format', error_msg)
+
+    def test_validate_work_dir_config_no_job_id(self):
+        """Test validate_work_dir_config with configurations that don't contain {job_id}."""
+        no_job_id_configs = [
+            './outputs/my_project',
+            '/data/experiments',
+            'outputs',
+            './',
+            'C:/data/projects',
+            '/home/user/data',
+            'relative/path/to',
+            '',  # Empty string
+        ]
+        
+        for work_dir in no_job_id_configs:
+            with self.subTest(work_dir=work_dir):
+                # Should not raise any exception
+                validate_work_dir_config(work_dir)
+
+    def test_resolve_job_id_with_placeholder(self):
+        """Test resolve_job_id when {job_id} placeholder is present."""
+        cfg = Namespace()
+        cfg.work_dir = './outputs/my_project/{job_id}'
+        cfg.export_path = './outputs/{job_id}/results.jsonl'
+        
+        # Should auto-generate job_id
+        cfg = resolve_job_id(cfg)
+        
+        self.assertIsNotNone(cfg.job_id)
+        self.assertFalse(cfg._user_provided_job_id)
+        self.assertIsInstance(cfg.job_id, str)
+        # Job ID should be in format: YYYYMMDD_HHMMSS_xxxxxx
+        self.assertRegex(cfg.job_id, r'^\d{8}_\d{6}_[a-f0-9]{6}$')
+
+    def test_resolve_job_id_without_placeholder(self):
+        """Test resolve_job_id when no {job_id} placeholder is present."""
+        cfg = Namespace()
+        cfg.work_dir = './outputs/my_project'
+        cfg.export_path = './outputs/results.jsonl'
+        
+        # Should still auto-generate job_id (fallback behavior)
+        cfg = resolve_job_id(cfg)
+        
+        self.assertIsNotNone(cfg.job_id)
+        self.assertFalse(cfg._user_provided_job_id)
+        self.assertIsInstance(cfg.job_id, str)
+        self.assertRegex(cfg.job_id, r'^\d{8}_\d{6}_[a-f0-9]{6}$')
+
+    def test_resolve_job_id_user_provided(self):
+        """Test resolve_job_id when user provides job_id."""
+        cfg = Namespace()
+        cfg.job_id = 'my_custom_job_123'
+        cfg.work_dir = './outputs/my_project/{job_id}'
+        
+        cfg = resolve_job_id(cfg)
+        
+        self.assertEqual(cfg.job_id, 'my_custom_job_123')
+        self.assertTrue(cfg._user_provided_job_id)
+
+    def test_resolve_job_directories_with_job_id_at_end(self):
+        """Test resolve_job_directories when {job_id} is at the end of work_dir."""
+        cfg = Namespace()
+        cfg.work_dir = './outputs/my_project/{job_id}'
+        cfg.job_id = '20250804_143022_abc123'
+        
+        cfg = resolve_job_directories(cfg)
+        
+        # work_dir should be substituted
+        self.assertEqual(cfg.work_dir, './outputs/my_project/20250804_143022_abc123')
+        # Other directories should be under job_dir
+        self.assertEqual(cfg.event_log_dir, './outputs/my_project/20250804_143022_abc123/logs')
+        self.assertEqual(cfg.checkpoint_dir, './outputs/my_project/20250804_143022_abc123/checkpoints')
+        self.assertEqual(cfg.partition_dir, './outputs/my_project/20250804_143022_abc123/partitions')
+        self.assertEqual(cfg.metadata_dir, './outputs/my_project/20250804_143022_abc123/metadata')
+        self.assertEqual(cfg.results_dir, './outputs/my_project/20250804_143022_abc123/results')
+        self.assertEqual(cfg.event_log_file, './outputs/my_project/20250804_143022_abc123/events.jsonl')
+
+    def test_resolve_job_directories_without_job_id_placeholder(self):
+        """Test resolve_job_directories when work_dir doesn't contain {job_id}."""
+        cfg = Namespace()
+        cfg.job_id = '20250804_143022_abc123'
+        cfg.work_dir = './outputs/my_project'
+        cfg = resolve_job_directories(cfg)
+
+        self.assertEqual(cfg.work_dir, './outputs/my_project/20250804_143022_abc123')
+        self.assertEqual(cfg.event_log_dir, './outputs/my_project/20250804_143022_abc123/logs')
+        self.assertEqual(cfg.checkpoint_dir, './outputs/my_project/20250804_143022_abc123/checkpoints')
+
+    def test_resolve_job_directories_placeholder_substitution(self):
+        """Test that placeholders are properly substituted in all relevant paths."""
+        cfg = Namespace()
+        cfg.work_dir = './outputs/{job_id}'
+        cfg.export_path = '{work_dir}/results.jsonl'
+        cfg.event_log_dir = '{work_dir}/logs'
+        cfg.checkpoint_dir = '{work_dir}/checkpoints'
+        cfg.partition_dir = '{work_dir}/partitions'
+        cfg.job_id = '20250804_143022_abc123'
+        
+        cfg = resolve_job_directories(cfg)
+        
+        # All placeholders should be substituted
+        self.assertEqual(cfg.work_dir, './outputs/20250804_143022_abc123')
+        self.assertEqual(cfg.export_path, './outputs/20250804_143022_abc123/results.jsonl')
+        # Note: event_log_dir is overridden by the system to use standard 'logs' directory
+        self.assertEqual(cfg.event_log_dir, './outputs/20250804_143022_abc123/logs')
+        self.assertEqual(cfg.checkpoint_dir, './outputs/20250804_143022_abc123/checkpoints')
+        self.assertEqual(cfg.partition_dir, './outputs/20250804_143022_abc123/partitions')
+        self.assertEqual(cfg.metadata_dir, './outputs/20250804_143022_abc123/metadata')
+        self.assertEqual(cfg.results_dir, './outputs/20250804_143022_abc123/results')
+        self.assertEqual(cfg.event_log_file, './outputs/20250804_143022_abc123/events.jsonl')
+
+    def test_resolve_job_directories_missing_job_id(self):
+        """Test resolve_job_directories when job_id is not set."""
+        cfg = Namespace()
+        cfg.work_dir = './outputs/my_project'
+        
+        with self.assertRaises(ValueError) as cm:
+            resolve_job_directories(cfg)
+        
+        self.assertIn('job_id must be set', str(cm.exception))
+
+    def test_resolve_job_directories_invalid_work_dir(self):
+        """Test resolve_job_directories with invalid work_dir containing {job_id} in middle."""
+        cfg = Namespace()
+        cfg.work_dir = './outputs/{job_id}/results'
+        cfg.job_id = '20250804_143022_abc123'
+        
+        with self.assertRaises(ValueError) as cm:
+            resolve_job_directories(cfg)
+        
+        error_msg = str(cm.exception)
+        self.assertIn('{job_id}', error_msg)
+        self.assertIn('must be the last part', error_msg)
+
+    def test_full_config_loading_with_job_id_placeholder(self):
+        """Test full config loading with {job_id} placeholder in work_dir."""
+        # Create a temporary config file
+        config_data = {
+            'dataset_path': './demos/data/demo-dataset.jsonl',
+            'work_dir': './outputs/test_project/{job_id}',
+            'export_path': '{work_dir}/results.jsonl',
+            'process': [
+                {'whitespace_normalization_mapper': {'text_key': 'text'}}
+            ]
+        }
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            yaml.dump(config_data, f)
+            temp_config_path = f.name
+        
+        try:
+            out = StringIO()
+            with redirect_stdout(out):
+                cfg = init_configs(args=['--config', temp_config_path])
+                
+                # Verify job_id was auto-generated
+                self.assertIsNotNone(cfg.job_id)
+                self.assertRegex(cfg.job_id, r'^\d{8}_\d{6}_[a-f0-9]{6}$')
+                
+                # Verify work_dir was substituted
+                self.assertIn(cfg.job_id, cfg.work_dir)
+                self.assertNotIn('{job_id}', cfg.work_dir)
+                
+                # Verify export_path was substituted
+                self.assertIn(cfg.job_id, cfg.export_path)
+                self.assertNotIn('{work_dir}', cfg.export_path)
+                
+        finally:
+            os.unlink(temp_config_path)
+
+    def test_full_config_loading_without_job_id_placeholder(self):
+        """Test full config loading without {job_id} placeholder in work_dir."""
+        # Create a temporary config file
+        config_data = {
+            'dataset_path': './demos/data/demo-dataset.jsonl',
+            'work_dir': './outputs/test_project',
+            'export_path': '{work_dir}/results.jsonl',
+            'process': [
+                {'whitespace_normalization_mapper': {'text_key': 'text'}}
+            ]
+        }
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            yaml.dump(config_data, f)
+            temp_config_path = f.name
+        
+        try:
+            out = StringIO()
+            with redirect_stdout(out):
+                cfg = init_configs(args=['--config', temp_config_path])
+                
+                # Verify job_id was auto-generated
+                self.assertIsNotNone(cfg.job_id)
+                self.assertRegex(cfg.job_id, r'^\d{8}_\d{6}_[a-f0-9]{6}$')
+                
+                # Verify work_dir
+                self.assertEqual(cfg.work_dir, f'./outputs/test_project/{cfg.job_id}')
+                
+                # Note: When there's no {job_id} placeholder, {work_dir} in export_path is still substituted
+                # The system substitutes {work_dir} with the actual work_dir value
+                self.assertNotIn('{work_dir}', cfg.export_path)
+                self.assertIn('./outputs/test_project', cfg.export_path)
+                self.assertNotIn(cfg.job_id, cfg.export_path)
+                
+        finally:
+            os.unlink(temp_config_path)
+
+    def test_full_config_loading_invalid_work_dir(self):
+        """Test full config loading with invalid work_dir containing {job_id} in middle."""
+        # Create a temporary config file with invalid work_dir
+        config_data = {
+            'dataset_path': './demos/data/demo-dataset.jsonl',
+            'work_dir': './outputs/{job_id}/results',  # Invalid: {job_id} not at end
+            'export_path': '{work_dir}/results.jsonl',
+            'process': [
+                {'whitespace_normalization_mapper': {'text_key': 'text'}}
+            ]
+        }
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            yaml.dump(config_data, f)
+            temp_config_path = f.name
+        
+        try:
+            out = StringIO()
+            with redirect_stdout(out), redirect_stderr(out):
+                with self.assertRaises(ValueError) as cm:
+                    init_configs(args=['--config', temp_config_path])
+                
+                error_msg = str(cm.exception)
+                self.assertIn('{job_id}', error_msg)
+                self.assertIn('must be the last part', error_msg)
+                
+        finally:
+            os.unlink(temp_config_path)
+
+    def test_user_provided_job_id(self):
+        """Test config loading with user-provided job_id."""
+        # Create a temporary config file
+        config_data = {
+            'dataset_path': './demos/data/demo-dataset.jsonl',
+            'work_dir': './outputs/test_project/{job_id}',
+            'export_path': '{work_dir}/results.jsonl',
+            'process': [
+                {'whitespace_normalization_mapper': {'text_key': 'text'}}
+            ]
+        }
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            yaml.dump(config_data, f)
+            temp_config_path = f.name
+        
+        try:
+            out = StringIO()
+            with redirect_stdout(out):
+                # Test with user-provided job_id
+                cfg = init_configs(args=[
+                    '--config', temp_config_path,
+                    '--job_id', 'my_custom_job_123'
+                ])
+                
+                # Verify user-provided job_id was used
+                self.assertEqual(cfg.job_id, 'my_custom_job_123')
+                self.assertTrue(cfg._user_provided_job_id)
+                
+                # Verify work_dir was substituted
+                self.assertEqual(cfg.work_dir, './outputs/test_project/my_custom_job_123')
+                
+        finally:
+            os.unlink(temp_config_path)
+
+
+class ConfigRuntimeConsistencyTest(DataJuicerTestCaseBase):
+
+    def test_removed_settings_are_rejected_in_cli_and_yaml(self):
+        from data_juicer.config.config import build_base_parser
+
+        removed = {
+            'intermediate_storage.preserve_intermediate_data': True,
+            'intermediate_storage.cleanup_temp_files': False,
+            'intermediate_storage.cleanup_on_success': True,
+            'intermediate_storage.retention_policy': 'keep_all',
+            'intermediate_storage.max_retention_days': 7,
+            'intermediate_storage.format': 'jsonl',
+            'intermediate_storage.compression': 'gzip',
+            'intermediate_storage.write_partitions': True,
+            'preserve_intermediate_data': True,
+            'resource_optimization.auto_configure': True,
+            'max_log_size_mb': 1,
+            'backup_count': 2,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, 'config.yaml')
+            for name, value in removed.items():
+                for source in ('cli', 'yaml'):
+                    with self.subTest(name=name, source=source):
+                        config = {'process': []}
+                        args = ['--config', path]
+                        if source == 'yaml':
+                            parent = config
+                            parts = name.split('.')
+                            for part in parts[:-1]:
+                                parent = parent.setdefault(part, {})
+                            parent[parts[-1]] = value
+                        else:
+                            args += ['--' + name, str(value).lower()]
+                        with open(path, 'w') as stream:
+                            yaml.safe_dump(config, stream)
+                        error = StringIO()
+                        with redirect_stderr(error), self.assertRaises(SystemExit) as caught:
+                            build_base_parser().parse_args(args)
+                        self.assertEqual(caught.exception.code, 2)
+                        self.assertIn(name.split('.')[0], error.getvalue())
+
+    def test_invalid_checkpoint_and_read_settings_fail_at_parse_time(self):
+        from data_juicer.config.config import build_base_parser
+
+        for name, value in [
+            ('checkpoint.strategy', 'every_partition'),
+            ('checkpoint.n_ops', '0'),
+            ('checkpoint.n_ops', '-1'),
+            ('override_num_blocks', '0'),
+            ('override_num_blocks', '-1'),
+        ]:
+            with self.subTest(name=name, value=value):
+                with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as caught:
+                    build_base_parser().parse_args(['--auto', '--' + name, value])
+                self.assertEqual(caught.exception.code, 2)
+
+    def test_parsed_checkpoint_strategies_select_expected_operations(self):
+        from data_juicer.config.config import build_base_parser
+        from data_juicer.utils.ckpt_utils import CheckpointStrategy, RayCheckpointManager
+
+        expected = {
+            'every_op': [0, 1, 2, 3, 4],
+            'every_n_ops': [2],
+            'manual': [1],
+            'disabled': [],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            for strategy, indices in expected.items():
+                with self.subTest(strategy=strategy):
+                    cfg = build_base_parser().parse_args([
+                        '--auto', '--checkpoint.strategy', strategy,
+                        '--checkpoint.n_ops', '3', '--checkpoint.op_names', '[op_1]',
+                    ])
+                    manager = RayCheckpointManager(
+                        tmp, checkpoint_enabled=cfg.checkpoint.enabled,
+                        checkpoint_strategy=CheckpointStrategy(cfg.checkpoint.strategy),
+                        checkpoint_n_ops=cfg.checkpoint.n_ops,
+                        checkpoint_op_names=cfg.checkpoint.op_names,
+                    )
+                    actual = [i for i in range(5) if manager.should_checkpoint(i, f'op_{i}')]
+                    self.assertEqual(actual, indices)
+
+    def test_lenient_jsonl_yaml_controls_real_loading(self):
+        from datasets.exceptions import DatasetGenerationError
+        from data_juicer.core.data.dataset_builder import DatasetBuilder
+
+        old_env = os.environ.pop('DATA_JUICER_JSONL_LENIENT', None)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                data_path = os.path.join(tmp, 'data.jsonl')
+                path = os.path.join(tmp, 'config.yaml')
+                with open(data_path, 'w') as stream:
+                    stream.write('{"text": "first"}\nnot json\n{"text": "last"}\n')
+                for enabled in (False, True):
+                    with self.subTest(enabled=enabled):
+                        with open(path, 'w') as stream:
+                            yaml.safe_dump({
+                                'dataset_path': data_path, 'np': 1,
+                                'load_jsonl_lenient': enabled, 'process': [],
+                                'work_dir': tmp, 'export_path': os.path.join(tmp, 'result.jsonl'),
+                            }, stream)
+                        cfg = init_configs(['--config', path], load_configs_only=True)
+                        builder = DatasetBuilder(cfg)
+                        if enabled:
+                            self.assertEqual(list(builder.load_dataset(num_proc=1)['text']), ['first', 'last'])
+                        else:
+                            with self.assertRaises(DatasetGenerationError):
+                                builder.load_dataset(num_proc=1)
+        finally:
+            if old_env is not None:
+                os.environ['DATA_JUICER_JSONL_LENIENT'] = old_env
+
+    def test_use_dag_yaml_controls_plan_without_changing_processing(self):
+        from data_juicer.core.executor.default_executor import DefaultExecutor
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data_path = os.path.join(tmp, 'data.jsonl')
+            with open(data_path, 'w') as stream:
+                stream.write('{"text": "hello\\u3000world"}\n')
+            for enabled in (None, False, True):
+                with self.subTest(enabled=enabled):
+                    path = os.path.join(tmp, f'config-{enabled}.yaml')
+                    with open(path, 'w') as stream:
+                        yaml.safe_dump({
+                            'dataset_path': data_path, 'np': 1, 'use_dag': enabled,
+                            'work_dir': os.path.join(tmp, str(enabled)),
+                            'export_path': os.path.join(tmp, str(enabled), 'result.jsonl'),
+                            'process': [{'whitespace_normalization_mapper': {}}],
+                        }, stream)
+                    cfg = init_configs(['--config', path], load_configs_only=True)
+                    executor = DefaultExecutor(cfg)
+                    result = executor.run()
+                    self.assertEqual(list(result['text']), ['hello world'])
+                    self.assertEqual(executor.pipeline_dag is not None, enabled is True)
+                    self.assertEqual(os.path.isfile(os.path.join(cfg.work_dir, 'dag_execution_plan.json')),
+                                     enabled is True)
+
+
+class EncryptionConfigTest(DataJuicerTestCaseBase):
+    """Tests for encryption-related config parameters and post-parse logic."""
+
+    def setUp(self):
+        super().setUp()
+        self.tmp_dir = tempfile.mkdtemp()
+        from cryptography.fernet import Fernet
+        self._key = Fernet.generate_key()
+        self._key_file = os.path.join(self.tmp_dir, 'enc.key')
+        with open(self._key_file, 'wb') as f:
+            f.write(self._key)
+
+    def tearDown(self):
+        super().tearDown()
+        import shutil
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
+        # clean env
+        os.environ.pop('DJ_ENCRYPTION_KEY', None)
+        super().tearDown()
+
+    def _write_minimal_yaml(self, extra: dict = None) -> str:
+        """Write a minimal valid config yaml and return its path."""
+        cfg_dict = {
+            'project_name': 'enc_test',
+            'dataset_path': test_yaml_path,  # reuse existing dataset path
+            'export_path': os.path.join(self.tmp_dir, 'out.jsonl'),
+            'process': [],
+        }
+        if extra:
+            cfg_dict.update(extra)
+        path = os.path.join(self.tmp_dir, 'enc_cfg.yaml')
+        with open(path, 'w') as f:
+            yaml.dump(cfg_dict, f)
+        return path
+
+    # ------------------------------------------------------------------
+    # Default values
+    # ------------------------------------------------------------------
+
+    def test_default_values(self):
+        """Both encryption flags default to False / None."""
+        yaml_path = self._write_minimal_yaml()
+        cfg = init_configs(args=['--config', yaml_path])
+        self.assertFalse(cfg.decrypt_after_reading)
+        self.assertFalse(cfg.encrypt_before_export)
+        self.assertIsNone(cfg.encryption_key_path)
+
+    # ------------------------------------------------------------------
+    # decrypt_after_reading flag
+    # ------------------------------------------------------------------
+
+    def test_decrypt_after_reading_true_disables_cache(self):
+        """When decrypt_after_reading=True, use_cache is forced to False."""
+        yaml_path = self._write_minimal_yaml({
+            'decrypt_after_reading': True,
+            'encryption_key_path': self._key_file,
+        })
+        cfg = init_configs(args=['--config', yaml_path])
+        self.assertTrue(cfg.decrypt_after_reading)
+        self.assertFalse(cfg.use_cache)
+
+    def test_decrypt_after_reading_uses_env_key(self):
+        """Key resolved from DJ_ENCRYPTION_KEY env var when no key file."""
+        os.environ['DJ_ENCRYPTION_KEY'] = self._key.decode()
+        yaml_path = self._write_minimal_yaml({'decrypt_after_reading': True})
+        # Should not raise even without encryption_key_path
+        cfg = init_configs(args=['--config', yaml_path])
+        self.assertTrue(cfg.decrypt_after_reading)
+
+    # ------------------------------------------------------------------
+    # encrypt_before_export flag
+    # ------------------------------------------------------------------
+
+    def test_encrypt_before_export_true_disables_cache(self):
+        """When encrypt_before_export=True, use_cache is forced to False."""
+        yaml_path = self._write_minimal_yaml({
+            'encrypt_before_export': True,
+            'encryption_key_path': self._key_file,
+        })
+        cfg = init_configs(args=['--config', yaml_path])
+        self.assertTrue(cfg.encrypt_before_export)
+        self.assertFalse(cfg.use_cache)
+
+    def test_encrypt_before_export_cmd_override(self):
+        """CLI flag --encrypt_before_export True overrides yaml default."""
+        yaml_path = self._write_minimal_yaml()
+        cfg = init_configs(args=[
+            '--config', yaml_path,
+            '--encrypt_before_export', 'True',
+            '--encryption_key_path', self._key_file,
+        ])
+        self.assertTrue(cfg.encrypt_before_export)
+
+    # ------------------------------------------------------------------
+    # Missing key raises ValueError early
+    # ------------------------------------------------------------------
+
+    def test_missing_key_raises_on_decrypt(self):
+        """decrypt_after_reading=True with no key raises ValueError."""
+        # Clear env just in case
+        os.environ.pop('DJ_ENCRYPTION_KEY', None)
+        yaml_path = self._write_minimal_yaml({'decrypt_after_reading': True})
+        with self.assertRaises((ValueError, Exception)):
+            init_configs(args=['--config', yaml_path])
+
+    def test_missing_key_raises_on_encrypt(self):
+        """encrypt_before_export=True with no key raises ValueError."""
+        os.environ.pop('DJ_ENCRYPTION_KEY', None)
+        yaml_path = self._write_minimal_yaml({'encrypt_before_export': True})
+        with self.assertRaises((ValueError, Exception)):
+            init_configs(args=['--config', yaml_path])
+
+    # ------------------------------------------------------------------
+    # cache_compress is cleared when cache is disabled
+    # ------------------------------------------------------------------
+
+    def test_cache_compress_cleared_when_encryption_enabled(self):
+        """cache_compress is set to None when encryption forces use_cache=False."""
+        yaml_path = self._write_minimal_yaml({
+            'decrypt_after_reading': True,
+            'encryption_key_path': self._key_file,
+            'cache_compress': 'gzip',
+        })
+        cfg = init_configs(args=['--config', yaml_path])
+        self.assertIsNone(cfg.cache_compress)
+
+
+class PartitionTargetSizeConfigTest(DataJuicerTestCaseBase):
+
+    def _load(self, extra_args=None):
+        return init_configs(
+            ['--auto'] + (extra_args or []),
+            allow_auto=True,
+            load_configs_only=True,
+        )
+
+    def _load_with_warnings(self, extra_args):
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            cfg = self._load(extra_args)
+        deprecations = [warning for warning in caught if issubclass(warning.category, DeprecationWarning)]
+        return cfg, deprecations
+
+    def _load_config_all_partition(self, extra_args=None):
+        """Load the reference partition stanza in an otherwise minimal config."""
+        config_all_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))),
+            'data_juicer',
+            'config',
+            'config_all.yaml',
+        )
+        with open(config_all_path) as f:
+            partition = yaml.safe_load(f)['partition']
+
+        config = {
+            'project_name': 'partition_config_all_test',
+            'dataset_path': test_yaml_path,
+            'export_path': os.path.join(tempfile.gettempdir(), 'partition_config_all_test.jsonl'),
+            'process': [],
+            'partition': partition,
+        }
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            yaml.safe_dump(config, f)
+            config_path = f.name
+        self.addCleanup(lambda: os.path.exists(config_path) and os.unlink(config_path))
+        return init_configs(
+            ['--config', config_path] + (extra_args or []),
+            load_configs_only=True,
+        )
+
+    def test_default_and_explicit_target_size(self):
+        self.assertEqual(self._load().partition.target_size_mb, 256)
+        cfg = self._load(['--partition.target_size_mb', '64'])
+        self.assertEqual(cfg.partition.target_size_mb, 64)
+
+    def test_non_positive_target_size_is_preserved_for_optimizer_clamping(self):
+        for value in ('0', '-1'):
+            with self.subTest(value=value):
+                cfg = self._load(['--partition.target_size_mb', value])
+                self.assertEqual(cfg.partition.target_size_mb, int(value))
+
+    def test_obsolete_flat_max_size_is_rejected(self):
+        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            with self.assertRaises(SystemExit) as cm:
+                self._load(['--max_partition_size_mb', '64'])
+        self.assertEqual(cm.exception.code, 2)
+
+    def test_nested_partition_size(self):
+        self.assertIsNone(self._load().partition.size)
+        self.assertEqual(self._load().partition.num_of_partitions, 4)
+        cfg = self._load(['--partition.mode', 'manual', '--partition.size', '500'])
+        self.assertEqual(cfg.partition.size, 500)
+        self.assertIsNone(cfg.partition.num_of_partitions)
+        with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            with self.assertRaises(SystemExit):
+                self._load(['--partition.size', '0'])
+
+    def test_config_all_allows_manual_size_cli_override(self):
+        default_cfg = self._load_config_all_partition()
+        self.assertEqual(default_cfg.partition.num_of_partitions, 4)
+
+        size_cfg = self._load_config_all_partition([
+            '--partition.mode', 'manual',
+            '--partition.size', '500',
+        ])
+        self.assertEqual(size_cfg.partition.size, 500)
+        self.assertIsNone(size_cfg.partition.num_of_partitions)
+
+    def test_flat_partition_size_bridges_and_warns(self):
+        for value in ('2000', '10000'):
+            with self.subTest(value=value):
+                cfg, warnings = self._load_with_warnings(['--partition_size', value])
+                self.assertEqual(cfg.partition.size, int(value))
+                self.assertEqual(len(warnings), 1)
+                self.assertIn('--partition_size', str(warnings[0].message))
+
+    def test_nested_partition_size_takes_precedence(self):
+        cfg, warnings = self._load_with_warnings(
+            ['--partition_size', '2000', '--partition.size', '3000']
+        )
+        self.assertEqual(cfg.partition.size, 3000)
+        self.assertEqual(len(warnings), 1)
+
+    def test_manual_size_and_count_are_mutually_exclusive(self):
+        with self.assertRaisesRegex(ValueError, 'mutually exclusive'):
+            self._load([
+                '--partition.mode', 'manual',
+                '--partition.size', '500',
+                '--partition.num_of_partitions', '8',
+            ])
+
+    def test_auto_partition_count_sentinel_can_use_size_fallback(self):
+        cfg = self._load([
+            '--partition.mode', 'manual',
+            '--partition.size', '500',
+            '--partition.num_of_partitions', 'auto',
+        ])
+        self.assertEqual(cfg.partition.size, 500)
+        self.assertEqual(cfg.partition.num_of_partitions, 'auto')
+
+    def test_manual_legacy_size_does_not_override_explicit_count(self):
+        import warnings
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            cfg = self._load([
+                '--partition.mode', 'manual',
+                '--partition_size', '500',
+                '--partition.num_of_partitions', '8',
+            ])
+        self.assertIsNone(cfg.partition.size)
+        self.assertEqual(cfg.partition.num_of_partitions, 8)
+        self.assertEqual(
+            [warning.category for warning in caught],
+            [DeprecationWarning, UserWarning],
+        )
+        self.assertIn('Ignoring deprecated partition_size', str(caught[1].message))
+
+    def test_manual_legacy_size_bridges_when_count_is_omitted(self):
+        cfg, warnings = self._load_with_warnings([
+            '--partition.mode', 'manual',
+            '--partition_size', '500',
+        ])
+        self.assertEqual(cfg.partition.size, 500)
+        self.assertIsNone(cfg.partition.num_of_partitions)
+        self.assertEqual(len(warnings), 1)
+
+
+if __name__ == '__main__':
+    unittest.main()

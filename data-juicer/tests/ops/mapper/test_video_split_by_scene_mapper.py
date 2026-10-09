@@ -1,0 +1,314 @@
+import os
+import unittest
+import tempfile
+import shutil
+
+from data_juicer.core.data import NestedDataset as Dataset
+
+from data_juicer.ops.mapper.video_split_by_scene_mapper import \
+    VideoSplitBySceneMapper
+from data_juicer.utils.mm_utils import SpecialTokens, load_file_byte
+from data_juicer.utils.unittest_utils import DataJuicerTestCaseBase
+
+class VideoSplitBySceneMapperTest(DataJuicerTestCaseBase):
+
+    data_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), '..',
+                             'data')
+    vid1_path = os.path.join(data_path, 'video1.mp4')  # about 12s
+    vid2_path = os.path.join(data_path, 'video2.mp4')  # about 23s
+    vid3_path = os.path.join(data_path, 'video3.mp4')  # about 50s
+
+    vid1_base, vid1_ext = os.path.splitext(os.path.basename(vid1_path))
+    vid2_base, vid2_ext = os.path.splitext(os.path.basename(vid2_path))
+    vid3_base, vid3_ext = os.path.splitext(os.path.basename(vid3_path))
+
+    op_name = 'video_split_by_scene_mapper'
+    tmp_dir = tempfile.TemporaryDirectory().name
+
+    def tearDown(self):
+        super().tearDown()
+        if os.path.exists(self.tmp_dir):
+            shutil.rmtree(self.tmp_dir)
+
+    def get_res_list(self, dataset: Dataset):
+        res_list = []
+        for sample in dataset.to_list():
+            scene_num = len(sample['videos'])
+            if 'text' in sample:
+                res_list.append({
+                    'scene_num': scene_num,
+                    'text': sample['text']
+                })
+            else:
+                res_list.append({'scene_num': scene_num})
+        return res_list
+
+    def _run_helper(self, op, source_list, target_list):
+        dataset = Dataset.from_list(source_list)
+        dataset = dataset.map(op.process)
+        res_list = self.get_res_list(dataset)
+        self.assertEqual(res_list, target_list)
+
+    def test_ContentDetector(self):
+        ds_list = [
+            {
+                'videos': [self.vid1_path]  # 3 scenes
+            },
+            {
+                'videos': [self.vid2_path]  # 1 scene
+            },
+            {
+                'videos': [self.vid3_path]  # 2 scenes
+            }
+        ]
+        tgt_list = [{'scene_num': 3}, {'scene_num': 1}, {'scene_num': 2}]
+        op = VideoSplitBySceneMapper(detector='ContentDetector',
+                                     threshold=27.0,
+                                     min_scene_len=15)
+        self._run_helper(op, ds_list, tgt_list)
+
+    def test_AdaptiveDetector(self):
+        ds_list = [
+            {
+                'videos': [self.vid1_path]  # 3 scenes
+            },
+            {
+                'videos': [self.vid2_path]  # 1 scene
+            },
+            {
+                'videos': [self.vid3_path]  # 8 scenes
+            }
+        ]
+        tgt_list = [{'scene_num': 3}, {'scene_num': 1}, {'scene_num': 8}]
+        op = VideoSplitBySceneMapper(detector='AdaptiveDetector',
+                                     threshold=3.0,
+                                     min_scene_len=15)
+        self._run_helper(op, ds_list, tgt_list)
+
+    def test_ThresholdDetector(self):
+        ds_list = [
+            {
+                'videos': [self.vid1_path]  # 1 scene
+            },
+            {
+                'videos': [self.vid2_path]  # 1 scene
+            },
+            {
+                'videos': [self.vid3_path]  # 1 scene
+            }
+        ]
+        tgt_list = [{'scene_num': 1}, {'scene_num': 1}, {'scene_num': 1}]
+        op = VideoSplitBySceneMapper(detector='ThresholdDetector',
+                                     threshold=12.0,
+                                     min_scene_len=15)
+        self._run_helper(op, ds_list, tgt_list)
+
+    def test_default_progress(self):
+        ds_list = [
+            {
+                'videos': [self.vid1_path]  # 3 scenes
+            },
+            {
+                'videos': [self.vid2_path]  # 1 scene
+            },
+            {
+                'videos': [self.vid3_path]  # 2 scenes
+            }
+        ]
+        tgt_list = [{'scene_num': 3}, {'scene_num': 1}, {'scene_num': 2}]
+        op = VideoSplitBySceneMapper(show_progress=True)
+        self._run_helper(op, ds_list, tgt_list)
+
+    def test_default_kwargs(self):
+        ds_list = [
+            {
+                'videos': [self.vid1_path]  # 2 scenes
+            },
+            {
+                'videos': [self.vid2_path]  # 1 scene
+            },
+            {
+                'videos': [self.vid3_path]  # 2 scenes
+            }
+        ]
+        tgt_list = [{'scene_num': 2}, {'scene_num': 1}, {'scene_num': 2}]
+        op = VideoSplitBySceneMapper(luma_only=True, kernel_size=5)
+        self._run_helper(op, ds_list, tgt_list)
+
+    def test_default_with_text(self):
+        ds_list = [
+            {
+                'text':
+                f'{SpecialTokens.video} this is video1 {SpecialTokens.eoc}',
+                'videos': [self.vid1_path]  # 3 scenes
+            },
+            {
+                'text':
+                f'{SpecialTokens.video} this is video2 {SpecialTokens.eoc}',
+                'videos': [self.vid2_path]  # 1 scene
+            },
+            {
+                'text':
+                f'{SpecialTokens.video} this is video3 {SpecialTokens.eoc}',
+                'videos': [self.vid3_path]  # 2 scenes
+            }
+        ]
+        tgt_list = [
+            {
+                'text':
+                f'{SpecialTokens.video}{SpecialTokens.video}{SpecialTokens.video} this is video1 {SpecialTokens.eoc}',  # noqa: E501
+                'scene_num': 3
+            },
+            {
+                'text':
+                f'{SpecialTokens.video} this is video2 {SpecialTokens.eoc}',
+                'scene_num': 1
+            },
+            {
+                'text':
+                f'{SpecialTokens.video}{SpecialTokens.video} this is video3 {SpecialTokens.eoc}',  # noqa: E501
+                'scene_num': 2
+            }
+        ]
+        op = VideoSplitBySceneMapper()
+        self._run_helper(op, ds_list, tgt_list)
+    
+    def test_output_format(self, save_field=None):
+        ds_list = [
+            {
+                'id': 0,
+                'text':
+                f'{SpecialTokens.video} this is video1 {SpecialTokens.eoc}',
+                'videos': [self.vid1_path]  # 3 scenes
+            },
+            {
+                'id': 1,
+                'text':
+                f'{SpecialTokens.video} this is video2 {SpecialTokens.eoc}',
+                'videos': [self.vid2_path]  # 1 scene
+            },
+            {
+                'id': 2,
+                'text':
+                f'{SpecialTokens.video} this is video3 {SpecialTokens.eoc}',
+                'videos': [self.vid3_path]  # 2 scenes
+            }
+        ]
+        tgt_list = [
+            {
+                'id': 0,
+                'text':
+                f'{SpecialTokens.video}{SpecialTokens.video}{SpecialTokens.video} this is video1 {SpecialTokens.eoc}',  # noqa: E501
+                'scene_num': 3
+            },
+            {
+                'id': 1,
+                'text':
+                f'{SpecialTokens.video} this is video2 {SpecialTokens.eoc}',
+                'scene_num': 1
+            },
+            {
+                'id': 2,
+                'text':
+                f'{SpecialTokens.video}{SpecialTokens.video} this is video3 {SpecialTokens.eoc}',  # noqa: E501
+                'scene_num': 2
+            }
+        ]
+        op = VideoSplitBySceneMapper(
+            output_format="bytes",
+            save_dir=self.tmp_dir,
+            save_field=save_field)
+
+        dataset = Dataset.from_list(ds_list)
+        dataset = dataset.map(op.process)
+
+        res_list = dataset.to_list()
+        res_list = sorted(res_list, key=lambda x: x["id"])
+
+        save_field = save_field or "videos"
+        for i in range(len(ds_list)):
+            res = res_list[i] 
+            tgt = tgt_list[i]
+            self.assertEqual(res['id'], tgt['id'])
+            self.assertEqual(res['text'], tgt['text'])
+            self.assertEqual(len(res[save_field]), tgt['scene_num'])
+            self.assertTrue(all(isinstance(v, bytes) for v in res[save_field]))
+
+    def test_save_field(self):
+        self.test_output_format(save_field="clips")
+
+    def test_input_bytes(self, output_format='bytes', save_field=None):
+        ds_list = [
+            {
+                'id': 0,
+                'text':
+                f'{SpecialTokens.video} this is video1 {SpecialTokens.eoc}',
+                'videos': [load_file_byte(self.vid1_path)]  # 3 scenes
+            },
+            {
+                'id': 1,
+                'text':
+                f'{SpecialTokens.video} this is video2 {SpecialTokens.eoc}',
+                'videos': [load_file_byte(self.vid2_path)]  # 1 scene
+            },
+            {
+                'id': 2,
+                'text':
+                f'{SpecialTokens.video} this is video3 {SpecialTokens.eoc}',
+                'videos': [load_file_byte(self.vid3_path)]  # 2 scenes
+            }
+        ]
+        tgt_list = [
+            {
+                'id': 0,
+                'text':
+                f'{SpecialTokens.video}{SpecialTokens.video}{SpecialTokens.video} this is video1 {SpecialTokens.eoc}',  # noqa: E501
+                'scene_num': 3
+            },
+            {
+                'id': 1,
+                'text':
+                f'{SpecialTokens.video} this is video2 {SpecialTokens.eoc}',
+                'scene_num': 1
+            },
+            {
+                'id': 2,
+                'text':
+                f'{SpecialTokens.video}{SpecialTokens.video} this is video3 {SpecialTokens.eoc}',  # noqa: E501
+                'scene_num': 2
+            }
+        ]
+        op = VideoSplitBySceneMapper(
+            output_format=output_format,
+            save_dir=self.tmp_dir,
+            save_field=save_field)
+
+        dataset = Dataset.from_list(ds_list)
+        dataset = dataset.map(op.process)
+
+        res_list = dataset.to_list()
+        res_list = sorted(res_list, key=lambda x: x["id"])
+
+        save_field = save_field or "videos"
+        for i in range(len(ds_list)):
+            res = res_list[i] 
+            tgt = tgt_list[i]
+            self.assertEqual(res['id'], tgt['id'])
+            self.assertEqual(res['text'], tgt['text'])
+            self.assertEqual(len(res[save_field]), tgt['scene_num'])
+            if output_format == 'bytes':
+                self.assertTrue(all(isinstance(v, bytes) for v in res[save_field]))
+            else:
+                # If the input video field is in bytes format, 
+                # the splited videos will directly replace the original video field, 
+                # and the format will remain consistent with the previous bytes format. 
+                # If the output_format is "path", it will also be in bytes format, so a new storage field must be specified.
+                self.assertTrue(all(isinstance(v, str) for v in res[save_field]))
+                self.assertTrue(all(v.startswith(self.tmp_dir) for v in res[save_field]))
+
+    def test_input_bytes_and_out_bytes(self):
+        self.test_input_bytes(output_format="path", save_field="clips")
+
+
+if __name__ == '__main__':
+    unittest.main()

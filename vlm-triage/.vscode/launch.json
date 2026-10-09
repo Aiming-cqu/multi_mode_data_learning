@@ -1,0 +1,69 @@
+{
+	"configurations": [
+		{
+			"name": "Python - Attach Process",
+			"processId": "${command:pickProcess}",
+			"request": "attach",
+			"type": "debugpy"
+		},
+		{
+			"console": "integratedTerminal",
+			"name": "Python - Current File",
+			"program": "${file}",
+			"request": "launch",
+			"type": "debugpy"
+		},
+		{
+			"args": "${command:pickArgs}",
+			"console": "integratedTerminal",
+			"name": "Python - Current File with Args",
+			"program": "${file}",
+			"request": "launch",
+			"type": "debugpy"
+		},
+		{
+			"args": "${file}",
+			"module": "pytest",
+			"name": "Pytest - Current File",
+			"request": "launch",
+			"type": "debugpy"
+		},
+		{
+			"args": [
+				"apps.embedding_api.main:app",
+				"--reload"
+			],
+			"jinja": true,
+			"module": "uvicorn",
+			"name": "FastAPI - embedding_api",
+			"request": "launch",
+			"type": "debugpy"
+		},
+		{
+			"args": [
+				"apps.visual_cr_locator_api.main:app",
+				"--reload"
+			],
+			"jinja": true,
+			"module": "uvicorn",
+			"name": "FastAPI - visual_cr_locator_api",
+			"request": "launch",
+			"type": "debugpy"
+		},
+		{
+			"args": [
+				"apps.voyager_proxy.main:app",
+				"--reload"
+			],
+			"jinja": true,
+			"module": "uvicorn",
+			"name": "FastAPI - voyager_proxy",
+			"request": "launch",
+			"type": "debugpy"
+		}
+	],
+	// 使用 IntelliSense 了解相关属性。
+	// 悬停以查看现有属性的描述。
+	// 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+	"version": "0.2.0"
+}

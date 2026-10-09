@@ -1,0 +1,15 @@
+{
+  "locator_id": 4541771,
+  "scenario_id": "24559838",
+  "base_task_id": 3628143100000385,
+  "feat_task_id": 3628143700000394,
+  "diff_type": "F2P",
+  "metrics": [
+    "dpe_collision"
+  ],
+  "locator_url": "http://10.190.55.60:8000/pages/crlocator.html?id=4541771",
+  "diff_url": "https://voyager.intra.xiaojukeji.com/static/management/#/simulation/review?reviewType=taskDiff&taskIds=3628143100000385,3628143700000394&selectedMetrics=dpe_collision",
+  "image_prefix": "data/visual-cr-locator-api/20260511/6295d05662c7",
+  "comment": "中间碰撞微妙，不确定拐点是哪一个",
+  "annotations": []
+}

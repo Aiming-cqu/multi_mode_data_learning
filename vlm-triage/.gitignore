@@ -1,0 +1,40 @@
+# wildcard
+*.egg-info/
+
+# anywhere
+__pycache__/
+.DS_Store
+test.*
+
+# absolute
+/.continue/
+/.coverage
+/.github/hooks/logs/
+/.pixi/
+/.playwright-mcp/
+/.roo/
+/.vscode/
+/backup/
+/cache
+/coverage.xml
+/data
+/htmlcov/
+/logs/
+/models/*/
+/requirements.txt
+/scripts/activation/local.sh
+/test/
+
+/experiments/*/artifacts/*
+!/experiments/*/artifacts/.gitkeep
+/experiments/*/logs/*
+!/experiments/*/logs/.gitkeep
+/experiments/*/results/*
+!/experiments/*/results/.gitkeep
+!/experiments/*/results/metrics.json
+!/experiments/*/results/conclusion.json
+
+/third-party/*
+!/third-party/default.code-profile
+!/third-party/otel-tui
+!/third-party/site-packages/

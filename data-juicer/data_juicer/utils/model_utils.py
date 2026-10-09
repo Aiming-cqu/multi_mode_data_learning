@@ -1,0 +1,2348 @@
+import fnmatch
+import importlib
+import inspect
+import io
+import os
+import shutil
+import subprocess
+import sys
+from contextlib import redirect_stderr
+from functools import partial
+from pickle import UnpicklingError
+from typing import List, Optional, Union
+
+import httpx
+import multiprocess as mp
+import wget
+from loguru import logger
+
+from data_juicer.utils.common_utils import nested_access
+from data_juicer.utils.lazy_loader import LazyLoader
+from data_juicer.utils.nltk_utils import (
+    ensure_nltk_resource,
+    patch_nltk_pickle_security,
+)
+from data_juicer.utils.ray_utils import is_ray_mode
+from data_juicer.utils.resource_utils import cuda_device_count
+
+from .cache_utils import DATA_JUICER_ASSETS_CACHE
+from .cache_utils import DATA_JUICER_EXTERNAL_MODELS_HOME as DJEMH
+from .cache_utils import DATA_JUICER_MODELS_CACHE as DJMC
+
+torch = LazyLoader("torch")
+transformers = LazyLoader("transformers")
+nn = LazyLoader("torch.nn")
+fasttext = LazyLoader("fasttext", "fasttext-predict")
+sentencepiece = LazyLoader("sentencepiece")
+kenlm = LazyLoader("kenlm")
+nltk = LazyLoader("nltk")
+aes_pred = LazyLoader("aesthetics_predictor", "simple-aesthetics-predictor")
+vllm = LazyLoader("vllm")
+diffusers = LazyLoader("diffusers")
+ram = LazyLoader("ram", "git+https://github.com/cmgzn/recognize-anything.git@889201b76458513d04afde5d4cfa376aa9e33ebf")
+cv2 = LazyLoader("cv2", "opencv-contrib-python")
+openai = LazyLoader("openai")
+litellm = LazyLoader("litellm")
+ultralytics = LazyLoader("ultralytics")
+tiktoken = LazyLoader("tiktoken")
+dashscope = LazyLoader("dashscope")
+qwen_vl_utils = LazyLoader("qwen_vl_utils", "qwen-vl-utils")
+transformers_stream_generator = LazyLoader(
+    "transformers_stream_generator",
+    "git+https://github.com/cmgzn/transformers-stream-generator.git@1b356de822eb1da8e7a35d798e2b973d2f8f3fb9",
+)
+
+MODEL_ZOO = {}
+
+# Default cached models links for downloading
+MODEL_LINKS = "https://dail-wlcb.oss-cn-wulanchabu.aliyuncs.com/" "data_juicer/models/"
+
+# Backup cached models links for downloading
+BACKUP_MODEL_LINKS = {
+    # language identification model from fasttext
+    "lid.176.bin": "https://dl.fbaipublicfiles.com/fasttext/supervised-models/",
+    # tokenizer and language model for English from sentencepiece and KenLM
+    "*.sp.model": "https://huggingface.co/edugp/kenlm/resolve/main/wikipedia/",
+    "*.arpa.bin": "https://huggingface.co/edugp/kenlm/resolve/main/wikipedia/",
+    # sentence split model from nltk punkt
+    "punkt.*.pickle": "https://dail-wlcb.oss-cn-wulanchabu.aliyuncs.com/" "data_juicer/models/",
+    # ram
+    "ram_plus_swin_large_14m.pth": "http://dail-wlcb.oss-cn-wulanchabu.aliyuncs.com/data_juicer/models/"
+    "ram_plus_swin_large_14m.pth",
+    # FastSAM
+    "FastSAM-s.pt": "https://github.com/ultralytics/assets/releases/download/v8.2.0/" "FastSAM-s.pt",
+    "FastSAM-x.pt": "https://github.com/ultralytics/assets/releases/download/v8.2.0/" "FastSAM-x.pt",
+    # spacy
+    "*_core_web_md-3.*.0": "https://dail-wlcb.oss-cn-wulanchabu.aliyuncs.com/" "data_juicer/models/",
+    # YOLO
+    "yolo11n.pt": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt",
+    # WiLoR
+    "wilor_model_path": "https://huggingface.co/spaces/rolpotamias/WiLoR/resolve/main/pretrained_models/wilor_final.ckpt",
+    "wilor_model_config": "https://raw.githubusercontent.com/rolpotamias/WiLoR/refs/heads/main/pretrained_models/model_config.yaml",
+    "wilor_detector_model_path": "https://huggingface.co/spaces/rolpotamias/WiLoR/resolve/main/pretrained_models/detector.pt",
+    # DWPose
+    "dwpose_onnx_det_model": "https://huggingface.co/yzd-v/DWPose/resolve/main/yolox_l.onnx",
+    "dwpose_onnx_pose_model": "https://huggingface.co/yzd-v/DWPose/resolve/main/dw-ll_ucoco_384.onnx",
+    # HaWoR
+    "hawor_model_path": "https://huggingface.co/ThunderVVV/HaWoR/resolve/main/hawor/checkpoints/hawor.ckpt",
+    "hawor_config_path": "https://huggingface.co/ThunderVVV/HaWoR/resolve/main/hawor/model_config.yaml",
+}
+
+
+def get_backup_model_link(model_name):
+    for pattern, url in BACKUP_MODEL_LINKS.items():
+        if fnmatch.fnmatch(model_name, pattern):
+            return url
+    return None
+
+
+def check_model(model_name, force=False):
+    """
+    Check whether a model exists in DATA_JUICER_MODELS_CACHE.
+    If exists, return its full path.
+    Else, download it from cached models links.
+
+    :param model_name: a specified model name
+    :param force: Whether to download model forcefully or not, Sometimes
+        the model file maybe incomplete for some reason, so need to
+        download again forcefully.
+    """
+    # check for local model
+    if not force and os.path.exists(model_name):
+        return model_name
+
+    if not force and DJEMH:
+        external_paths = DJEMH.split(os.pathsep)
+        for path in external_paths:
+            clean_path = path.strip()
+            if not clean_path:
+                continue
+            model_path = os.path.join(clean_path, model_name)
+            if os.path.exists(model_path):
+                return model_path
+
+    if not os.path.exists(DJMC):
+        os.makedirs(DJMC)
+
+    # check if the specified model exists. If it does not exist, download it
+    cached_model_path = os.path.join(DJMC, model_name)
+    if force:
+        if os.path.exists(cached_model_path):
+            os.remove(cached_model_path)
+            logger.info(f"Model [{cached_model_path}] is invalid. Forcing download...")
+        else:
+            logger.info(f"Model [{cached_model_path}] is not found. Downloading...")
+
+        model_link = os.path.join(MODEL_LINKS, model_name)
+        try:
+            wget.download(model_link, cached_model_path)
+        except:  # noqa: E722
+            backup_model_link = get_backup_model_link(model_name)
+            if backup_model_link is not None:
+                backup_model_link = os.path.join(backup_model_link, model_name)
+            try:
+                wget.download(backup_model_link, cached_model_path)
+            except:  # noqa: E722
+                import traceback
+
+                traceback.print_exc()
+                raise RuntimeError(
+                    f"Downloading model [{model_name}] error. "
+                    f"Please retry later or download it into {DJMC} "
+                    f"manually from {model_link} or {backup_model_link} "
+                )
+    return cached_model_path
+
+
+def check_model_home(model_name):
+    if not DJEMH:
+        return model_name
+
+    cached_model_path = os.path.join(DJEMH, model_name)
+    if os.path.exists(cached_model_path):
+        return cached_model_path
+    return model_name
+
+
+def filter_arguments(func, args_dict):
+    """
+    Filters and returns only the valid arguments for a given function
+    signature.
+
+    :param func: The function or callable to inspect.
+    :param args_dict: A dictionary of argument names and values to filter.
+    :return: A dictionary containing only the arguments that match the
+                function's signature, preserving any **kwargs if applicable.
+    """
+    params = inspect.signature(func).parameters
+    filtered_args = {}
+    for name, param in params.items():
+        if param.kind == inspect.Parameter.VAR_KEYWORD:
+            return args_dict
+        if name not in {"self", "cls"} and name in args_dict:
+            filtered_args[name] = args_dict[name]
+    return filtered_args
+
+
+class ChatAPIModel:
+    def __init__(self, model=None, endpoint=None, response_path=None, **kwargs):
+        """
+        Initializes an instance of the APIModel class.
+
+        :param model: The name of the model to be used for making API
+            calls. This should correspond to a valid model identifier
+            recognized by the API server. If it's None, use the first available model from the server.
+        :param endpoint: The URL endpoint for the API. If provided as a
+            relative path, it will be appended to the base URL (defined by the
+            `OPENAI_BASE_URL` environment variable or through an additional
+            `base_url` parameter). Defaults to '/chat/completions' for
+            OpenAI compatibility.
+        :param response_path: A dot-separated string specifying the path to
+            extract the desired content from the API response. The default
+            value is 'choices.0.message.content', which corresponds to the
+            typical structure of an OpenAI API response.
+        :param kwargs: Additional keyword arguments for configuring the
+            internal OpenAI client.
+        """
+        self.model = model
+        self.endpoint = endpoint or "/chat/completions"
+        self.response_path = response_path or "choices.0.message.content"
+        self.last_response = None  # last chat completion JSON (for usage / debugging)
+
+        client_args = filter_arguments(openai.OpenAI, kwargs)
+        if "base_url" not in client_args and os.environ.get("OPENAI_BASE_URL"):
+            client_args["base_url"] = os.environ.get("OPENAI_BASE_URL").rstrip("/")
+        self._client = openai.OpenAI(**client_args)
+        if self.model is None:
+            logger.warning("No model specified. Using the first available model from the server.")
+            models_list = self._client.models.list().data
+            if len(models_list) == 0:
+                raise ValueError("No models available on the server.")
+            self.model = models_list[0].id
+
+    def __call__(self, messages, **kwargs):
+        """
+        Sends messages to the configured API model and returns the parsed
+        response content.
+
+        :param messages: A list of message dictionaries to send to the API.
+                         Each message should have a 'role' (e.g., 'user',
+                         'assistant') and 'content' (the message text).
+        :param kwargs: Additional parameters for the API call.
+        :return: The parsed response content from the API call, or an empty
+            string if an error occurs.
+        """
+        body = {
+            "messages": messages,
+            "model": self.model,
+        }
+        body.update(kwargs)
+        stream = kwargs.get("stream", False)
+        stream_cls = openai.Stream[openai.types.chat.ChatCompletionChunk]
+
+        try:
+            response = self._client.post(
+                self.endpoint, body=body, cast_to=httpx.Response, stream=stream, stream_cls=stream_cls
+            )
+            result = response.json()
+            self.last_response = result
+            return nested_access(result, self.response_path) or ""
+        except Exception as e:
+            logger.exception(e)
+            self.last_response = None
+            return ""
+
+
+class EmbeddingAPIModel:
+    def __init__(self, model=None, endpoint=None, response_path=None, **kwargs):
+        """
+        Initializes an instance specialized for embedding APIs.
+
+        :param model: The model identifier for embedding API calls.
+            If it's None, use the first available model from the server.
+        :param endpoint: API endpoint URL. Defaults to '/embeddings'.
+        :param response_path: Path to extract embeddings from response.
+            Defaults to 'data.0.embedding'.
+        :param kwargs: Configuration for the OpenAI client.
+        """
+        self.model = model
+        self.endpoint = endpoint or "/embeddings"
+        self.response_path = response_path or "data.0.embedding"
+
+        client_args = filter_arguments(openai.OpenAI, kwargs)
+        if "base_url" not in client_args and os.environ.get("OPENAI_BASE_URL"):
+            client_args["base_url"] = os.environ.get("OPENAI_BASE_URL").rstrip("/")
+        self._client = openai.OpenAI(**client_args)
+        if self.model is None:
+            logger.warning("No model specified. Using the first available model from the server.")
+            if len(self._client.models.list().data) == 0:
+                raise ValueError("No models available on the server.")
+            self.model = self._client.models.list().data[0].id
+
+    def __call__(self, input, **kwargs):
+        """
+        Processes input text and returns embeddings.
+
+        :param input: Input text or list of texts to embed.
+        :param kwargs: Additional API parameters.
+        :return: Extracted embeddings or empty list on error.
+        """
+        body = {
+            "model": self.model,
+            "input": input,
+        }
+        body.update(kwargs)
+
+        try:
+            response = self._client.post(self.endpoint, body=body, cast_to=httpx.Response)
+            result = response.json()
+            return nested_access(result, self.response_path) or []
+        except Exception as e:
+            logger.exception(f"Embedding API error: {e}")
+            return []
+
+
+class ResponsesAPIModel:
+    def __init__(self, model=None, endpoint=None, response_path=None, **kwargs):
+        """
+        Initializes an instance specialized for OpenAI Responses API.
+
+        :param model: The model identifier for Responses API calls.
+            If it's None, use the first available model from the server.
+        :param endpoint: API endpoint URL. Defaults to '/responses'.
+        :param response_path: Path to extract content from response.
+            Defaults to 'output.0.content.0.text'.
+        :param kwargs: Configuration for the OpenAI client.
+        """
+        self.model = model
+        self.endpoint = endpoint or "/responses"
+        self.response_path = response_path or "output.0.content.0.text"
+
+        client_args = filter_arguments(openai.OpenAI, kwargs)
+        if "base_url" not in client_args and os.environ.get("OPENAI_BASE_URL"):
+            client_args["base_url"] = os.environ.get("OPENAI_BASE_URL").rstrip("/")
+        self._client = openai.OpenAI(**client_args)
+        if self.model is None:
+            logger.warning("No model specified. Using the first available model from the server.")
+            models_list = self._client.models.list().data
+            if len(models_list) == 0:
+                raise ValueError("No models available on the server.")
+            self.model = models_list[0].id
+
+    def __call__(self, input, **kwargs):
+        """
+        Sends input to the Responses API and returns the parsed response content.
+
+        :param input: The input text or content to send to the API.
+        :param kwargs: Additional parameters for the API call.
+        :return: The parsed response content from the API call, or an empty
+            string if an error occurs.
+        """
+        body = {
+            "model": self.model,
+            "input": input,
+        }
+        body.update(kwargs)
+
+        try:
+            response = self._client.post(self.endpoint, body=body, cast_to=httpx.Response)
+            result = response.json()
+            return nested_access(result, self.response_path) or ""
+        except Exception as e:
+            logger.exception(f"Responses API error: {e}")
+            return ""
+
+
+def _split_litellm_credentials(kwargs):
+    """Pull out credential kwargs, keeping the rest as completion params.
+
+    Credentials are returned separately so callers can forward them only when
+    set; when blank, LiteLLM falls back to each provider's own environment
+    variable (e.g. ``ANTHROPIC_API_KEY``, ``GEMINI_API_KEY``, AWS credentials).
+    ``base_url`` is accepted as an alias for LiteLLM's ``api_base``.
+    """
+    call_kwargs = dict(kwargs)
+    api_key = call_kwargs.pop("api_key", None) or None
+    api_base = call_kwargs.pop("api_base", None) or call_kwargs.pop("base_url", None) or None
+    return api_key, api_base, call_kwargs
+
+
+class LiteLLMChatAPIModel:
+    """Chat model backed by the LiteLLM SDK (https://github.com/BerriAI/litellm).
+
+    Unlike :class:`ChatAPIModel`, which raw-POSTs an OpenAI-format body to a
+    ``base_url``, this routes through ``litellm.completion`` so a single
+    ``provider/model`` string reaches 100+ providers - including ones whose auth
+    is not OpenAI-compatible (Amazon Bedrock SigV4, Google Vertex service
+    accounts, Azure AD), which a base-url override alone cannot reach. LiteLLM
+    returns an OpenAI-shaped response, so the existing ``response_path`` parsing
+    is unchanged.
+    """
+
+    def __init__(self, model=None, endpoint=None, response_path=None, **kwargs):
+        """
+        :param model: The LiteLLM model string, e.g. ``gpt-4o-mini``,
+            ``anthropic/claude-opus-4-8``, ``gemini/gemini-2.5-flash``,
+            ``bedrock/anthropic.claude-3-5-sonnet-...``. Required.
+        :param endpoint: Kept for interface parity; unused by LiteLLM routing.
+        :param response_path: Dot-separated path to the content. Defaults to
+            ``choices.0.message.content`` (the OpenAI/LiteLLM response shape).
+        :param kwargs: Credentials (``api_key``, ``base_url``/``api_base``) and
+            default completion params (e.g. ``temperature``).
+        """
+        if model is None:
+            raise ValueError(
+                "`model` is required for the LiteLLM API backend, e.g. "
+                "'gpt-4o-mini', 'anthropic/claude-opus-4-8', 'bedrock/...'."
+            )
+        self.model = model
+        self.endpoint = endpoint or "/chat/completions"
+        self.response_path = response_path or "choices.0.message.content"
+        self.last_response = None  # last completion dump (for usage / debugging)
+        self.api_key, self.api_base, self.default_params = _split_litellm_credentials(kwargs)
+
+    def __call__(self, messages, **kwargs):
+        """
+        :param messages: OpenAI-style list of ``{'role', 'content'}`` dicts.
+        :param kwargs: Per-call overrides (merged over the defaults).
+        :return: Parsed response content, or an empty string on error.
+        """
+        # drop_params lets LiteLLM silently drop kwargs a given provider does
+        # not support (e.g. Anthropic rejecting seed/frequency_penalty), so one
+        # call path works across providers.
+        call_kwargs = {"model": self.model, "messages": messages, "drop_params": True}
+        if self.api_key:
+            call_kwargs["api_key"] = self.api_key
+        if self.api_base:
+            call_kwargs["api_base"] = self.api_base
+        call_kwargs.update(self.default_params)
+        call_kwargs.update(kwargs)
+
+        try:
+            response = litellm.completion(**call_kwargs)
+            result = response.model_dump()
+            self.last_response = result
+            return nested_access(result, self.response_path) or ""
+        except Exception as e:
+            logger.exception(e)
+            self.last_response = None
+            return ""
+
+
+class LiteLLMEmbeddingAPIModel:
+    """Embedding model backed by ``litellm.embedding``.
+
+    Mirrors :class:`EmbeddingAPIModel` but routes through LiteLLM, unlocking
+    embedding providers (Voyage, Cohere, Bedrock, Vertex, ...) via one API.
+    """
+
+    def __init__(self, model=None, endpoint=None, response_path=None, **kwargs):
+        """
+        :param model: The LiteLLM embedding model string. Required.
+        :param endpoint: Kept for interface parity; unused by LiteLLM routing.
+        :param response_path: Defaults to ``data.0.embedding``.
+        :param kwargs: Credentials and default params (see chat model).
+        """
+        if model is None:
+            raise ValueError("`model` is required for the LiteLLM embedding backend.")
+        self.model = model
+        self.endpoint = endpoint or "/embeddings"
+        self.response_path = response_path or "data.0.embedding"
+        self.api_key, self.api_base, self.default_params = _split_litellm_credentials(kwargs)
+
+    def __call__(self, input, **kwargs):
+        """
+        :param input: Text or list of texts to embed.
+        :param kwargs: Per-call overrides.
+        :return: Extracted embeddings, or an empty list on error.
+        """
+        call_kwargs = {"model": self.model, "input": input, "drop_params": True}
+        if self.api_key:
+            call_kwargs["api_key"] = self.api_key
+        if self.api_base:
+            call_kwargs["api_base"] = self.api_base
+        call_kwargs.update(self.default_params)
+        call_kwargs.update(kwargs)
+
+        try:
+            response = litellm.embedding(**call_kwargs)
+            result = response.model_dump()
+            return nested_access(result, self.response_path) or []
+        except Exception as e:
+            logger.exception(f"LiteLLM embedding API error: {e}")
+            return []
+
+
+class LiteLLMResponsesAPIModel:
+    """Responses-API model backed by ``litellm.responses``.
+
+    Mirrors :class:`ResponsesAPIModel` but routes through LiteLLM, so a single
+    provider/model string reaches every provider LiteLLM exposes through the
+    OpenAI Responses API. LiteLLM returns a Responses-shaped object, so the
+    existing ``output.0.content.0.text`` extraction is unchanged.
+    """
+
+    def __init__(self, model=None, endpoint=None, response_path=None, **kwargs):
+        """
+        :param model: The LiteLLM model string. Required.
+        :param endpoint: Kept for interface parity; unused by LiteLLM routing.
+        :param response_path: Defaults to ``output.0.content.0.text``.
+        :param kwargs: Credentials and default params (see the chat model).
+        """
+        if model is None:
+            raise ValueError("`model` is required for the LiteLLM responses backend.")
+        self.model = model
+        self.endpoint = endpoint or "/responses"
+        self.response_path = response_path or "output.0.content.0.text"
+        self.last_response = None
+        self.api_key, self.api_base, self.default_params = _split_litellm_credentials(kwargs)
+
+    def __call__(self, input, **kwargs):
+        """
+        :param input: The input text/content to send to the Responses API.
+        :param kwargs: Per-call overrides.
+        :return: Parsed response content, or an empty string on error.
+        """
+        call_kwargs = {"model": self.model, "input": input, "drop_params": True}
+        if self.api_key:
+            call_kwargs["api_key"] = self.api_key
+        if self.api_base:
+            call_kwargs["api_base"] = self.api_base
+        call_kwargs.update(self.default_params)
+        call_kwargs.update(kwargs)
+
+        try:
+            response = litellm.responses(**call_kwargs)
+            result = response.model_dump()
+            self.last_response = result
+            return nested_access(result, self.response_path) or ""
+        except Exception as e:
+            logger.exception(f"LiteLLM responses API error: {e}")
+            self.last_response = None
+            return ""
+
+
+def _merge_openai_compatible_env_into_model_params(model_params):
+    """Fill OpenAI client kwargs from environment (DashScope REST / OpenAI-compatible).
+
+    Supported env vars:
+    - ``OPENAI_API_KEY``, ``DASHSCOPE_API_KEY``, or ``SK`` -> ``api_key``
+    - ``OPENAI_BASE_URL``, ``OPENAI_API_URL``, or ``DASHSCOPE_BASE_URL`` -> ``base_url``
+      (trailing slash stripped)
+
+    Explicit keys in ``model_params`` take precedence.
+    """
+    out = dict(model_params) if model_params else {}
+    if not out.get("api_key"):
+        key = os.environ.get("OPENAI_API_KEY") or os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("SK")
+        if key:
+            out["api_key"] = key
+    if not out.get("base_url"):
+        base = (
+            os.environ.get("OPENAI_BASE_URL")
+            or os.environ.get("OPENAI_API_URL")
+            or os.environ.get("DASHSCOPE_BASE_URL")
+        )
+        if base:
+            out["base_url"] = base.rstrip("/")
+    return out
+
+
+def _is_dashscope_openai_compatible_base(base_url: Optional[str]) -> bool:
+    if not base_url:
+        return False
+    u = base_url.lower()
+    if "dashscope" in u:
+        return True
+    if "compatible-mode" in u and "aliyun" in u:
+        return True
+    return False
+
+
+def _maybe_remap_model_for_dashscope(
+    model: Optional[str], base_url: Optional[str], endpoint: Optional[str]
+) -> Optional[str]:
+    """DashScope compatible-mode does not serve OpenAI model ids (e.g. gpt-4o).
+
+    If the base URL looks like DashScope compatible API and the model id is not a
+    typical Qwen/DeepSeek id, remap using ``DASHSCOPE_DEFAULT_MODEL`` or
+    ``OPENAI_DEFAULT_MODEL``, else ``qwen-plus``.
+
+    Skipped for non-chat endpoints (e.g. ``/embeddings``).
+    """
+    ep = (endpoint or "").lower()
+    if "embedd" in ep:
+        return model
+    if not model or not _is_dashscope_openai_compatible_base(base_url):
+        return model
+    m = model.lower()
+    if m.startswith("qwen") or m.startswith("deepseek"):
+        return model
+    remapped = os.environ.get("DASHSCOPE_DEFAULT_MODEL") or os.environ.get("OPENAI_DEFAULT_MODEL")
+    if remapped:
+        if remapped != model:
+            logger.info(
+                "Remapping API model [{}] -> [{}] for DashScope compatible endpoint",
+                model,
+                remapped,
+            )
+        return remapped
+    fallback = "qwen-plus"
+    logger.info(
+        "API model [{}] is not a DashScope model id; using [{}]. "
+        "Set DASHSCOPE_DEFAULT_MODEL or pass api_or_hf_model explicitly.",
+        model,
+        fallback,
+    )
+    return fallback
+
+
+def prepare_api_model(
+    model,
+    *,
+    endpoint=None,
+    response_path=None,
+    return_processor=False,
+    processor_config=None,
+    api_backend=None,
+    **model_params,
+):
+    """Creates a callable API model for interacting with OpenAI-compatible API.
+    The callable supports custom response parsing and works with proxy servers
+    that may be incompatible.
+
+    :param model: The name of the model to interact with.
+    :param endpoint: The URL endpoint for the API. If provided as a relative
+        path, it will be appended to the base URL (defined by the
+        `OPENAI_BASE_URL` environment variable or through an additional
+        `base_url` parameter). Supported endpoints include:
+        - '/chat/completions' for chat models
+        - '/embeddings' for embedding models
+        - '/responses' for OpenAI Responses API
+        Defaults to `/chat/completions` for OpenAI compatibility.
+    :param response_path: The dot-separated  path to extract desired content
+        from the API response. Defaults to 'choices.0.message.content'
+        for chat models, 'data.0.embedding' for embedding models, and
+        'output.0.content.0.text' for responses models.
+    :param return_processor: A boolean flag indicating whether to return a
+        processor along with the model. The processor can be used for tasks
+        like tokenization or encoding. Defaults to False.
+    :param processor_config: A dictionary containing configuration parameters
+        for initializing a Hugging Face processor. It is only relevant if
+        `return_processor` is set to True.
+    :param api_backend: Which request backend to use. ``"openai_compatible"``
+        (default) uses the existing direct OpenAI-compatible POST path.
+        ``"litellm"`` routes chat/embedding calls through the LiteLLM SDK
+        (``litellm.completion`` / ``litellm.embedding``), reaching 100+
+        providers from one ``provider/model`` string, including providers whose
+        auth is not OpenAI-compatible (Bedrock, Vertex, Azure AD). It can also
+        be supplied through operator ``model_params`` (e.g. ``api_backend:
+        litellm`` in a YAML config). The default keeps existing configurations
+        unchanged.
+    :param model_params: Additional parameters for configuring the API model.
+        On the ``openai_compatible`` backend, environment variables
+        ``OPENAI_BASE_URL`` / ``OPENAI_API_URL`` and ``OPENAI_API_KEY`` /
+        ``DASHSCOPE_API_KEY`` are merged when not set here (OpenAI-compatible /
+        DashScope REST). On the ``litellm`` backend this env merging is skipped
+        so it never leaks OpenAI/DashScope credentials onto another provider;
+        explicit ``api_key`` / ``base_url`` in ``model_params`` are still
+        honored, and every other provider reads its own env var via LiteLLM.
+    :return: A callable APIModel instance, and optionally a processor
+        if `return_processor` is True.
+    """
+    # Select the backend first (explicit arg wins over an operator model_params
+    # entry), so the OpenAI/DashScope env merging below is scoped to the
+    # openai_compatible path only.
+    api_backend = api_backend or model_params.pop("api_backend", None) or "openai_compatible"
+    if api_backend not in ("openai_compatible", "litellm"):
+        raise ValueError(f"Unsupported api_backend: {api_backend!r} (expected 'openai_compatible' or 'litellm')")
+
+    endpoint = endpoint or "/chat/completions"
+
+    if api_backend == "litellm":
+        # get_model() supplies the local execution device, not an API parameter.
+        model_params.pop("device", None)
+        # LiteLLM routes by the ``provider/model`` string and each provider
+        # reads its own credentials, so we must NOT merge OpenAI/DashScope env
+        # vars into the params here (that would leak one provider's key/base_url
+        # onto another). Explicit api_key/base_url in model_params are honored.
+        # The DashScope base-url remap (which rewrites the model id) is likewise
+        # skipped on this path.
+        ENDPOINT_CLASS_MAP = {
+            "chat": LiteLLMChatAPIModel,
+            "embeddings": LiteLLMEmbeddingAPIModel,
+            "responses": LiteLLMResponsesAPIModel,
+        }
+    else:
+        model_params = _merge_openai_compatible_env_into_model_params(model_params)
+        model = _maybe_remap_model_for_dashscope(model, model_params.get("base_url"), endpoint)
+        ENDPOINT_CLASS_MAP = {
+            "chat": ChatAPIModel,
+            "embeddings": EmbeddingAPIModel,
+            "responses": ResponsesAPIModel,
+        }
+
+    API_Class = next((cls for keyword, cls in ENDPOINT_CLASS_MAP.items() if keyword in endpoint.lower()), None)
+
+    if API_Class is None:
+        raise ValueError(f"Unsupported endpoint: {endpoint}")
+
+    client = API_Class(model=model, endpoint=endpoint, response_path=response_path, **model_params)
+
+    if not return_processor:
+        return client
+
+    def get_processor():
+        try:
+            return tiktoken.encoding_for_model(check_model_home(model))
+        except Exception:
+            pass
+
+        try:
+            return dashscope.get_tokenizer(check_model_home(model))
+        except Exception:
+            pass
+
+        try:
+            return transformers.AutoTokenizer.from_pretrained(
+                pretrained_model_name_or_path=check_model_home(model), **processor_config
+            )
+        except Exception:
+            pass
+
+        try:
+            processor = transformers.AutoProcessor.from_pretrained(
+                pretrained_model_name_or_path=check_model_home(model), **processor_config
+            )
+            return processor
+        except Exception:
+            pass
+
+        raise ValueError(
+            "Failed to initialize the processor. Please check the following:\n"  # noqa: E501
+            "- For OpenAI models: Install 'tiktoken' via `pip install tiktoken`.\n"  # noqa: E501
+            "- For DashScope models: Install both 'dashscope' and 'tiktoken' via `pip install dashscope tiktoken`.\n"  # noqa: E501
+            "- For custom models: Use the 'processor_config' parameter to configure a Hugging Face processor."  # noqa: E501
+        )
+
+    if processor_config is not None and "pretrained_model_name_or_path" in processor_config:
+        processor = transformers.AutoProcessor.from_pretrained(**processor_config)
+    else:
+        processor = get_processor()
+    return (client, processor)
+
+
+def prepare_deepcalib_model(model_path, **model_params):
+
+    device = model_params.pop("device", None)
+    if device is None or device == "cpu":
+        raise ValueError("CUDA device must be specified for deepcalib model.")
+
+    device = device.replace("cuda", "/gpu")
+
+    if not os.path.exists(model_path):
+        LazyLoader.check_packages(["gdown"])
+        deepcalib_folder = os.path.join(DJMC, "deepcalib")
+        deepcalib_model_path = os.path.join(deepcalib_folder, "Regression", "Single_net", "weights_10_0.02.h5")
+        os.makedirs(deepcalib_folder, exist_ok=True)
+
+        if not os.path.exists(deepcalib_model_path):
+
+            deepcalib_zip_path = os.path.join(DJMC, "deepcalib_weights.zip")
+            subprocess.run(["gdown", "1TYZn-f2z7O0hp_IZnNfZ06ExgU9ii70T", "-O", deepcalib_zip_path], check=True)
+
+            import zipfile
+
+            zip_file = zipfile.ZipFile(deepcalib_zip_path)
+            for names in zip_file.namelist():
+                zip_file.extract(names, deepcalib_folder)
+            zip_file.close()
+
+        model_path = deepcalib_model_path
+
+    LazyLoader.check_packages(["tensorflow==2.20.0"])
+    import tensorflow as tf
+    from keras.applications.inception_v3 import InceptionV3
+    from keras.layers import Dense, Flatten, Input
+    from keras.models import Model
+
+    gpus = tf.config.list_physical_devices("GPU")
+    tf.config.set_visible_devices(gpus[int(device.split(":")[-1])], "GPU")
+    tf.config.experimental.set_memory_growth(gpus[int(device.split(":")[-1])], True)
+    with tf.device(device):
+        input_shape = (299, 299, 3)
+        main_input = Input(shape=input_shape, dtype="float32", name="main_input")
+        phi_model = InceptionV3(weights="imagenet", include_top=False, input_tensor=main_input, input_shape=input_shape)
+        phi_features = phi_model.output
+        phi_flattened = Flatten(name="phi-flattened")(phi_features)
+        final_output_focal = Dense(1, activation="sigmoid", name="output_focal")(phi_flattened)
+        final_output_distortion = Dense(1, activation="sigmoid", name="output_distortion")(phi_flattened)
+
+        for layer in phi_model.layers:
+            layer.name = layer.name + "_phi"
+
+        model = Model(inputs=main_input, outputs=[final_output_focal, final_output_distortion])
+        model.load_weights(model_path)
+
+    return model
+
+
+def prepare_diffusion_model(pretrained_model_name_or_path, diffusion_type, **model_params):
+    """
+    Prepare and load an Diffusion model from HuggingFace.
+
+    :param pretrained_model_name_or_path: input Diffusion model name
+        or local path to the model
+    :param diffusion_type: the use of the diffusion model. It can be
+        'image2image', 'text2image', 'inpainting'
+    :return: a Diffusion model.
+    """
+
+    TORCH_DTYPE_MAPPING = {
+        "fp32": torch.float32,
+        "fp16": torch.float16,
+        "bf16": torch.bfloat16,
+    }
+
+    LazyLoader.check_packages(["torch", "transformers"])
+
+    device = model_params.pop("device", None)
+    if not device:
+        model_params["device_map"] = "balanced"
+    if "torch_dtype" in model_params:
+        model_params["torch_dtype"] = TORCH_DTYPE_MAPPING[model_params["torch_dtype"]]
+
+    diffusion_type_to_pipeline = {
+        "image2image": diffusers.AutoPipelineForImage2Image,
+        "text2image": diffusers.AutoPipelineForText2Image,
+        "inpainting": diffusers.AutoPipelineForInpainting,
+    }
+
+    if diffusion_type not in diffusion_type_to_pipeline.keys():
+        raise ValueError(
+            f"Not support {diffusion_type} diffusion_type for diffusion "
+            "model. Can only be one of "
+            '["image2image", "text2image", "inpainting"].'
+        )
+
+    pipeline = diffusion_type_to_pipeline[diffusion_type]
+    model = pipeline.from_pretrained(check_model_home(pretrained_model_name_or_path), **model_params)
+    if device:
+        model = model.to(device)
+
+    return model
+
+
+def prepare_dwpose_model(onnx_det_model, onnx_pose_model, **model_params):
+    from data_juicer.ops.common.dwpose_func import DWposeDetector
+
+    device = model_params.pop("device", "cpu")
+
+    def _get_model_path(model_path, default_filename, download_key):
+        if not os.path.exists(model_path):
+            if not os.path.exists(DJMC):
+                os.makedirs(DJMC)
+            model_path = os.path.join(DJMC, default_filename)
+            if not os.path.exists(model_path):
+                wget.download(BACKUP_MODEL_LINKS[download_key], DJMC)
+        return model_path
+
+    onnx_det_model = _get_model_path(onnx_det_model, "yolox_l.onnx", "dwpose_onnx_det_model")
+    onnx_pose_model = _get_model_path(onnx_pose_model, "dw-ll_ucoco_384.onnx", "dwpose_onnx_pose_model")
+
+    dwpose_model = DWposeDetector(onnx_det_model, onnx_pose_model, device)
+    return dwpose_model
+
+
+def prepare_fastsam_model(model_path, **model_params):
+    device = model_params.pop("device", "cpu")
+    model = ultralytics.FastSAM(check_model(model_path)).to(device)
+    return model
+
+
+def prepare_fasttext_model(model_name="lid.176.bin", **model_params):
+    """
+    Prepare and load a fasttext model.
+
+    :param model_name: input model name
+    :return: model instance.
+    """
+    logger.info("Loading fasttext language identification model...")
+    try:
+        # Suppress FastText warnings by redirecting stderr
+        with redirect_stderr(io.StringIO()):
+            ft_model = fasttext.load_model(check_model(model_name))
+        # Verify the model has the predict method (for language identification)
+        if not hasattr(ft_model, "predict"):
+            raise AttributeError("Loaded model does not support prediction")
+    except Exception as e:
+        logger.warning(f"Error loading model: {e}. Attempting to force download...")
+        try:
+            with redirect_stderr(io.StringIO()):
+                ft_model = fasttext.load_model(check_model(model_name, force=True))
+            if not hasattr(ft_model, "predict"):
+                raise AttributeError("Loaded model does not support prediction")
+        except Exception as e:
+            logger.error(f"Failed to load model after download attempt: {e}")
+            raise
+    return ft_model
+
+
+def prepare_huggingface_model(
+    pretrained_model_name_or_path, *, return_model=True, return_pipe=False, pipe_task="text-generation", **model_params
+):
+    """
+    Prepare and load a huggingface model.
+
+    :param pretrained_model_name_or_path: model name or path
+    :param return_model: return model or not
+    :param return_pipe: return pipeline or not
+    :param pipe_task: task for pipeline
+    :return: a tuple (model, processor) if `return_model` is True;
+        otherwise, only the processor is returned.
+    """
+    # Check if we need accelerate for device_map
+    if "device" in model_params:
+        device = model_params.pop("device")
+        if device.startswith("cuda"):
+            try:
+                model_params["device_map"] = device
+            except ImportError:
+                # If accelerate is not available, use device directly
+                model_params["device"] = device
+                logger.warning("accelerate not found, using device directly")
+
+    pretrained_model_name_or_path = check_model_home(pretrained_model_name_or_path)
+    processor = transformers.AutoProcessor.from_pretrained(pretrained_model_name_or_path, **model_params)
+
+    if return_model:
+        config = transformers.AutoConfig.from_pretrained(pretrained_model_name_or_path, **model_params)
+        if hasattr(config, "auto_map"):
+            class_name = next((k for k in config.auto_map if k.startswith("AutoModel")), "AutoModel")
+        else:
+            # TODO: What happens if more than one
+            class_name = config.architectures[0]
+
+        model_class = getattr(transformers, class_name)
+        model = model_class.from_pretrained(pretrained_model_name_or_path, **model_params)
+
+        if return_pipe:
+            pipe_params = {}
+            if isinstance(processor, transformers.PreTrainedTokenizerBase):
+                pipe_params = {"tokenizer": processor}
+            elif isinstance(processor, transformers.SequenceFeatureExtractor):
+                pipe_params = {"feature_extractor": processor}
+            elif isinstance(processor, transformers.BaseImageProcessor):
+                pipe_params = {"image_processor": processor}
+            pipe = transformers.pipeline(task=pipe_task, model=model, config=config, **pipe_params)
+            model = pipe
+
+    return (model, processor) if return_model else processor
+
+
+def prepare_hawor_model(hawor_model_path, hawor_config_path, mano_right_path, mano_left_path=None, **model_params):
+
+    device = model_params.pop("device", "cpu")
+
+    hawor_repo_path = os.path.join(DATA_JUICER_ASSETS_CACHE, "HaWoR")
+    if not os.path.exists(hawor_repo_path):
+        subprocess.run(["git", "clone", "https://github.com/ThunderVVV/HaWoR.git", hawor_repo_path], check=True)
+    import sys
+
+    sys.path.append(hawor_repo_path)
+
+    from data_juicer.ops.common.hawor_func import HAWOR, get_config
+
+    if not os.path.exists(mano_right_path):
+        raise ValueError(
+            "Users need to download 'MANO_RIGHT.pkl' from https://mano.is.tue.mpg.de/ and comply with the MANO license."
+        )
+
+    if not os.path.exists(hawor_model_path):
+        hawor_model_dir = os.path.join(DJMC, "HaWor")
+        os.makedirs(hawor_model_dir, exist_ok=True)
+        hawor_model_path = os.path.join(hawor_model_dir, "hawor.ckpt")
+        subprocess.run(["wget", BACKUP_MODEL_LINKS["hawor_model_path"], "-O", hawor_model_path], check=True)
+
+    if not os.path.exists(hawor_config_path):
+        hawor_model_dir = os.path.join(DJMC, "HaWor")
+        os.makedirs(hawor_model_dir, exist_ok=True)
+        hawor_config_path = os.path.join(hawor_model_dir, "model_config.yaml")
+        subprocess.run(["wget", BACKUP_MODEL_LINKS["hawor_config_path"], "-O", hawor_config_path], check=True)
+
+    model_cfg = get_config(hawor_config_path, update_cachedir=True)
+
+    if (model_cfg.MODEL.BACKBONE.TYPE == "vit") and ("BBOX_SHAPE" not in model_cfg.MODEL):
+        model_cfg.defrost()
+        assert (
+            model_cfg.MODEL.IMAGE_SIZE == 256
+        ), f"MODEL.IMAGE_SIZE ({model_cfg.MODEL.IMAGE_SIZE}) should be 256 for ViT backbone"
+        model_cfg.MODEL.BBOX_SHAPE = [192, 256]
+        model_cfg.freeze()
+
+    if "DATA_DIR" in model_cfg.MANO:
+        model_cfg.defrost()
+        model_cfg.MANO.DATA_DIR = os.path.join(hawor_repo_path, "_DATA/data")
+        model_cfg.MANO.MODEL_PATH = mano_right_path
+        model_cfg.MANO.MEAN_PARAMS = os.path.join(hawor_repo_path, "_DATA/data/mano_mean_params.npz")
+        model_cfg.freeze()
+
+    hawor_model = HAWOR.load_from_checkpoint(hawor_model_path, strict=False, cfg=model_cfg, weights_only=False).to(
+        device
+    )
+
+    from data_juicer.ops.common.mano_func import MANO
+
+    mano_right_model = MANO(model_path=mano_right_path).to(device)
+
+    mano_left_model = None
+    if mano_left_path and os.path.exists(mano_left_path):
+        mano_left_model = MANO.build_left(model_path=mano_left_path).to(device)
+
+    return hawor_model, model_cfg, mano_right_model, mano_left_model
+
+
+def prepare_kenlm_model(lang, name_pattern="{}.arpa.bin", **model_params):
+    """
+    Prepare and load a kenlm model.
+
+    :param model_name: input model name in formatting syntax.
+    :param lang: language to render model name
+    :return: model instance.
+    """
+    model_params.pop("device", None)
+
+    model_name = name_pattern.format(lang)
+
+    logger.info("Loading kenlm language model...")
+    try:
+        kenlm_model = kenlm.Model(check_model(model_name), **model_params)
+    except:  # noqa: E722
+        kenlm_model = kenlm.Model(check_model(model_name, force=True), **model_params)
+    return kenlm_model
+
+
+def prepare_moge_model(model_path, **model_params):
+
+    device = model_params.pop("device", "cpu")
+
+    LazyLoader.check_packages(["moge@ git+https://github.com/microsoft/MoGe.git"])
+    from moge.model.v2 import MoGeModel
+
+    model = MoGeModel.from_pretrained(model_path).to(device)
+
+    return model
+
+
+def prepare_nltk_model(lang, name_pattern="punkt.{}.pickle", **model_params):
+    """
+    Prepare and load a nltk punkt model with enhanced resource handling.
+
+    :param model_name: input model name in formatting syntax
+    :param lang: language to render model name
+    :return: model instance.
+    """
+    model_params.pop("device", None)
+
+    # Ensure pickle security is patched
+    patch_nltk_pickle_security()
+
+    nltk_to_punkt = {"en": "english", "fr": "french", "pt": "portuguese", "es": "spanish"}
+    assert lang in nltk_to_punkt.keys(), "lang must be one of the following: {}".format(list(nltk_to_punkt.keys()))
+
+    logger.info("Loading nltk punkt split model...")
+
+    try:
+        # Resource path and fallback for the punkt model
+        resource_path = f"tokenizers/punkt/{nltk_to_punkt[lang]}.pickle"
+
+        # Ensure the resource is available
+        if ensure_nltk_resource(resource_path, "punkt"):
+            logger.info(f"Successfully verified resource {resource_path}")
+        else:
+            logger.warning(f"Could not verify resource {resource_path}, model may not " f"work correctly")
+
+        # Load the model
+        nltk_model = nltk.data.load(resource_path, **model_params)
+    except Exception as e:
+        # Fallback to downloading and retrying
+        logger.warning(f"Error loading model: {e}. Attempting to download...")
+        try:
+            nltk.download("punkt", quiet=False)
+            nltk_model = nltk.data.load(resource_path, **model_params)
+        except Exception as download_error:
+            logger.error(f"Failed to load model after download " f"attempt: {download_error}")
+            raise
+
+    return nltk_model
+
+
+def prepare_nltk_pos_tagger(**model_params):
+    """
+    Prepare and load NLTK's part-of-speech tagger with enhanced resource
+      handling.
+
+    :return: The POS tagger model
+    """
+    model_params.pop("device", None)
+
+    # Ensure pickle security is patched
+    patch_nltk_pickle_security()
+
+    logger.info("Loading NLTK POS tagger model...")
+
+    try:
+        # Resource path and fallback for the averaged_perceptron_tagger
+        resource_path = "taggers/averaged_perceptron_tagger/english.pickle"
+
+        # Ensure the resource is available
+        if ensure_nltk_resource(resource_path, "averaged_perceptron_tagger"):
+            logger.info(f"Successfully verified resource {resource_path}")
+        else:
+            logger.warning(f"Could not verify resource {resource_path}, model may not " f"work correctly")
+
+        # Import the POS tagger
+        import nltk.tag
+
+        tagger = nltk.tag.pos_tag
+    except Exception as e:
+        # Fallback to downloading and retrying
+        logger.warning(f"Error loading POS tagger: {e}. Attempting to download...")
+        try:
+            nltk.download("averaged_perceptron_tagger", quiet=False)
+            import nltk.tag
+
+            tagger = nltk.tag.pos_tag
+        except Exception as download_error:
+            logger.error(f"Failed to load POS tagger after download " f"attempt: {download_error}")
+            raise
+
+    return tagger
+
+
+def prepare_opencv_classifier(model_path, **model_params):
+    model = cv2.CascadeClassifier(model_path)
+    return model
+
+
+def prepare_recognizeAnything_model(
+    pretrained_model_name_or_path="ram_plus_swin_large_14m.pth", input_size=384, **model_params
+):
+    """
+    Prepare and load recognizeAnything model.
+
+    :param model_name: input model name.
+    :param input_size: the input size of the model.
+    """
+    logger.info("Loading recognizeAnything model...")
+
+    try:
+        model = ram.models.ram_plus(
+            pretrained=check_model(pretrained_model_name_or_path), image_size=input_size, vit="swin_l"
+        )
+    except (RuntimeError, UnpicklingError) as e:  # noqa: E722
+        logger.warning(e)
+        model = ram.models.ram_plus(
+            pretrained=check_model(pretrained_model_name_or_path, force=True), image_size=input_size, vit="swin_l"
+        )
+    device = model_params.pop("device", "cpu")
+    model.to(device).eval()
+    return model
+
+
+def prepare_sdxl_prompt2prompt(pretrained_model_name_or_path, pipe_func, torch_dtype="fp32", device="cpu"):
+    pretrained_model_name_or_path = check_model_home(pretrained_model_name_or_path)
+    if torch_dtype == "fp32":
+        model = pipe_func.from_pretrained(
+            pretrained_model_name_or_path, torch_dtype=torch.float32, use_safetensors=True
+        ).to(device)
+    else:
+        model = pipe_func.from_pretrained(
+            pretrained_model_name_or_path, torch_dtype=torch.float16, use_safetensors=True
+        ).to(device)
+    return model
+
+
+def prepare_sentencepiece_model(model_path, **model_params):
+    """
+    Prepare and load a sentencepiece model.
+
+    :param model_path: input model path
+    :return: model instance
+    """
+    logger.info("Loading sentencepiece model...")
+    sentencepiece_model = sentencepiece.SentencePieceProcessor()
+    try:
+        sentencepiece_model.load(check_model(model_path))
+    except:  # noqa: E722
+        sentencepiece_model.load(check_model(model_path, force=True))
+    return sentencepiece_model
+
+
+def prepare_sentencepiece_for_lang(lang, name_pattern="{}.sp.model", **model_params):
+    """
+    Prepare and load a sentencepiece model for specific language.
+
+    :param lang: language to render model name
+    :param name_pattern: pattern to render the model name
+    :return: model instance.
+    """
+
+    model_name = name_pattern.format(lang)
+    return prepare_sentencepiece_model(model_name)
+
+
+def prepare_simple_aesthetics_model(pretrained_model_name_or_path, *, return_model=True, **model_params):
+    """
+    Prepare and load a simple aesthetics model.
+
+    :param pretrained_model_name_or_path: model name or path
+    :param return_model: return model or not
+    :return: a tuple (model, input processor) if `return_model` is True;
+        otherwise, only the processor is returned.
+    """
+    # Check if we need accelerate for device_map
+    if "device" in model_params:
+        device = model_params.pop("device")
+        if device.startswith("cuda"):
+            try:
+                model_params["device_map"] = device
+            except ImportError:
+                # If accelerate is not available, use device directly
+                model_params["device"] = device
+                logger.warning("accelerate not found, using device directly")
+
+    pretrained_model_name_or_path = check_model_home(pretrained_model_name_or_path)
+    processor = transformers.CLIPProcessor.from_pretrained(pretrained_model_name_or_path, **model_params)
+    if not return_model:
+        return processor
+    else:
+        if "v1" in pretrained_model_name_or_path:
+            model = aes_pred.AestheticsPredictorV1.from_pretrained(pretrained_model_name_or_path, **model_params)
+        elif "v2" in pretrained_model_name_or_path and "linear" in pretrained_model_name_or_path:
+            model = aes_pred.AestheticsPredictorV2Linear.from_pretrained(pretrained_model_name_or_path, **model_params)
+        elif "v2" in pretrained_model_name_or_path and "relu" in pretrained_model_name_or_path:
+            model = aes_pred.AestheticsPredictorV2ReLU.from_pretrained(pretrained_model_name_or_path, **model_params)
+        else:
+            raise ValueError("Not support {}".format(pretrained_model_name_or_path))
+        return (model, processor)
+
+
+def prepare_spacy_model(lang, name_pattern="{}_core_web_md-3.7.0", **model_params):
+    """
+    Prepare spacy model for specific language.
+
+    :param lang: language of sapcy model. Should be one of ["zh",
+        "en"]
+    :return: corresponding spacy model
+    """
+    spacy = LazyLoader("spacy")
+
+    assert lang in ["zh", "en"], "Diversity only support zh and en"
+    model_name = name_pattern.format(lang)
+    logger.info(f"Loading spacy model [{model_name}]...")
+    compressed_model = "{}.tar.gz".format(model_name)
+
+    # decompress the compressed model if it's not decompressed
+    def decompress_model(compressed_model_path):
+        if not compressed_model_path.endswith(".tar.gz"):
+            raise ValueError("Only .tar.gz files are supported")
+
+        decompressed_model_path = compressed_model_path.replace(".tar.gz", "")
+        if os.path.exists(decompressed_model_path) and os.path.isdir(decompressed_model_path):
+            return decompressed_model_path
+
+        ver_name = os.path.basename(decompressed_model_path)
+        unver_name = ver_name.rsplit("-", maxsplit=1)[0]
+        target_dir_in_archive = f"{ver_name}/{unver_name}/{ver_name}/"
+
+        import tarfile
+
+        with tarfile.open(compressed_model_path, "r:gz") as tar:
+            for member in tar.getmembers():
+                if member.name.startswith(target_dir_in_archive):
+                    # relative path without unnecessary directory levels
+                    relative_path = os.path.relpath(member.name, start=target_dir_in_archive)
+                    target_path = os.path.join(decompressed_model_path, relative_path)
+
+                    if member.isfile():
+                        # ensure the directory exists
+                        target_directory = os.path.dirname(target_path)
+                        os.makedirs(target_directory, exist_ok=True)
+                        # for files, extract to the specific location
+                        with tar.extractfile(member) as source:
+                            with open(target_path, "wb") as target:
+                                target.write(source.read())
+        return decompressed_model_path
+
+    try:
+        diversity_model = spacy.load(decompress_model(check_model(compressed_model)))
+    except:  # noqa: E722
+        diversity_model = spacy.load(decompress_model(check_model(compressed_model, force=True)))
+    return diversity_model
+
+
+def prepare_video_blip_model(pretrained_model_name_or_path, *, return_model=True, **model_params):
+    """
+    Prepare and load a video-clip model with the corresponding processor.
+
+    :param pretrained_model_name_or_path: model name or path
+    :param return_model: return model or not
+    :param trust_remote_code: passed to transformers
+    :return: a tuple (model, input processor) if `return_model` is True;
+        otherwise, only the processor is returned.
+    """
+    if "device" in model_params:
+        model_params["device_map"] = model_params.pop("device")
+
+    class VideoBlipVisionModel(transformers.Blip2VisionModel):
+        """A simple, augmented version of Blip2VisionModel to handle
+        videos."""
+
+        def forward(
+            self,
+            pixel_values: Optional[torch.FloatTensor] = None,
+            output_attentions: Optional[bool] = None,
+            output_hidden_states: Optional[bool] = None,
+            return_dict: Optional[bool] = None,
+            interpolate_pos_encoding: bool = False,
+        ) -> Union[tuple, transformers.modeling_outputs.BaseModelOutputWithPooling]:
+            """Flatten `pixel_values` along the batch and time dimension,
+            pass it through the original vision model,
+            then unflatten it back.
+
+            :param pixel_values: a tensor of shape
+            (batch, channel, time, height, width)
+
+            :returns:
+                last_hidden_state: a tensor of shape
+                (batch, time * seq_len, hidden_size)
+                pooler_output: a tensor of shape
+                (batch, time, hidden_size)
+                hidden_states:
+                    a tuple of tensors of shape
+                    (batch, time * seq_len, hidden_size),
+                    one for the output of the embeddings +
+                    one for each layer
+                attentions:
+                    a tuple of tensors of shape
+                    (batch, time, num_heads, seq_len, seq_len),
+                    one for each layer
+            """
+            if pixel_values is None:
+                raise ValueError("You have to specify pixel_values")
+
+            batch, _, time, _, _ = pixel_values.size()
+
+            # flatten along the batch and time dimension to create a
+            # tensor of shape
+            # (batch * time, channel, height, width)
+            flat_pixel_values = pixel_values.permute(0, 2, 1, 3, 4).flatten(end_dim=1)
+
+            vision_outputs: transformers.modeling_outputs.BaseModelOutputWithPooling = super().forward(  # noqa: E501
+                pixel_values=flat_pixel_values,
+                output_attentions=output_attentions,
+                output_hidden_states=output_hidden_states,
+                return_dict=True,
+                interpolate_pos_encoding=interpolate_pos_encoding,
+            )
+
+            # now restore the original dimensions
+            # vision_outputs.last_hidden_state is of shape
+            # (batch * time, seq_len, hidden_size)
+            seq_len = vision_outputs.last_hidden_state.size(1)
+            last_hidden_state = vision_outputs.last_hidden_state.view(batch, time * seq_len, -1)
+            # vision_outputs.pooler_output is of shape
+            # (batch * time, hidden_size)
+            pooler_output = vision_outputs.pooler_output.view(batch, time, -1)
+            # hidden_states is a tuple of tensors of shape
+            # (batch * time, seq_len, hidden_size)
+            hidden_states = (
+                tuple(hidden.view(batch, time * seq_len, -1) for hidden in vision_outputs.hidden_states)
+                if vision_outputs.hidden_states is not None
+                else None
+            )
+            # attentions is a tuple of tensors of shape
+            # (batch * time, num_heads, seq_len, seq_len)
+            attentions = (
+                tuple(hidden.view(batch, time, -1, seq_len, seq_len) for hidden in vision_outputs.attentions)
+                if vision_outputs.attentions is not None
+                else None
+            )
+            if return_dict:
+                return transformers.modeling_outputs.BaseModelOutputWithPooling(  # noqa: E501
+                    last_hidden_state=last_hidden_state,
+                    pooler_output=pooler_output,
+                    hidden_states=hidden_states,
+                    attentions=attentions,
+                )
+            return (last_hidden_state, pooler_output, hidden_states, attentions)
+
+    class VideoBlipForConditionalGeneration(transformers.Blip2ForConditionalGeneration):
+        def __init__(self, config: transformers.Blip2Config) -> None:
+            # HACK: we call the grandparent super().__init__() to bypass
+            # transformers.Blip2ForConditionalGeneration.__init__() so we can
+            # replace self.vision_model
+            super(transformers.Blip2ForConditionalGeneration, self).__init__(config)
+
+            self.vision_model = VideoBlipVisionModel(config.vision_config)
+
+            self.query_tokens = nn.Parameter(torch.zeros(1, config.num_query_tokens, config.qformer_config.hidden_size))
+            self.qformer = transformers.Blip2QFormerModel(config.qformer_config)
+
+            self.language_projection = nn.Linear(config.qformer_config.hidden_size, config.text_config.hidden_size)
+            if config.use_decoder_only_language_model:
+                language_model = transformers.AutoModelForCausalLM.from_config(config.text_config)
+            else:
+                language_model = transformers.AutoModelForSeq2SeqLM.from_config(config.text_config)  # noqa: E501
+            self.language_model = language_model
+
+            # Initialize weights and apply final processing
+            self.post_init()
+
+    pretrained_model_name_or_path = check_model_home(pretrained_model_name_or_path)
+    processor = transformers.AutoProcessor.from_pretrained(
+        pretrained_model_name_or_path, num_query_tokens=32, **model_params
+    )
+    if return_model:
+        model_class = VideoBlipForConditionalGeneration
+        model = model_class.from_pretrained(pretrained_model_name_or_path, **model_params)
+        model.config.image_token_index = 50265
+    return (model, processor) if return_model else processor
+
+
+def prepare_video_depth_anything(model_path, **model_params):
+    video_depth_anything_repo_path = os.path.join(DATA_JUICER_ASSETS_CACHE, "Video-Depth-Anything")
+    if not os.path.exists(video_depth_anything_repo_path):
+        subprocess.run(
+            [
+                "git",
+                "clone",
+                "https://github.com/DepthAnything/Video-Depth-Anything.git",
+                video_depth_anything_repo_path,
+            ],
+            check=True,
+        )
+
+    sys.path.append(video_depth_anything_repo_path)
+
+    from video_depth_anything.video_depth import VideoDepthAnything
+
+    device = model_params.pop("device", "cpu")
+
+    model_configs = {
+        "vits": {"encoder": "vits", "features": 64, "out_channels": [48, 96, 192, 384]},
+        "vitb": {"encoder": "vitb", "features": 128, "out_channels": [96, 192, 384, 768]},
+        "vitl": {"encoder": "vitl", "features": 256, "out_channels": [256, 512, 1024, 1024]},
+    }
+
+    model_links = {
+        "video_depth_anything_vits": "https://huggingface.co/depth-anything/Video-Depth-Anything-Small/resolve/main/video_depth_anything_vits.pth",
+        "video_depth_anything_vitb": "https://huggingface.co/depth-anything/Video-Depth-Anything-Base/resolve/main/video_depth_anything_vitb.pth",
+        "video_depth_anything_vitl": "https://huggingface.co/depth-anything/Video-Depth-Anything-Large/resolve/main/video_depth_anything_vitl.pth",
+        "metric_video_depth_anything_vits": "https://huggingface.co/depth-anything/Metric-Video-Depth-Anything-Small/resolve/main/metric_video_depth_anything_vits.pth",
+        "metric_video_depth_anything_vitb": "https://huggingface.co/depth-anything/Metric-Video-Depth-Anything-Base/resolve/main/metric_video_depth_anything_vitb.pth",
+        "metric_video_depth_anything_vitl": "https://huggingface.co/depth-anything/Metric-Video-Depth-Anything-Large/resolve/main/metric_video_depth_anything_vitl.pth",
+    }
+
+    if "vits" in model_path:
+        encoder_type = "vits"
+    elif "vitb" in model_path:
+        encoder_type = "vitb"
+    else:
+        encoder_type = "vitl"
+
+    if "metric" in model_path:
+        metric = True
+    else:
+        metric = False
+
+    if "metric_video_depth_anything_vitl" in model_path:
+        model_type = "metric_video_depth_anything_vitl"
+    elif "metric_video_depth_anything_vitb" in model_path:
+        model_type = "metric_video_depth_anything_vitb"
+    elif "metric_video_depth_anything_vits" in model_path:
+        model_type = "metric_video_depth_anything_vits"
+    elif "video_depth_anything_vitb" in model_path:
+        model_type = "video_depth_anything_vitb"
+    elif "video_depth_anything_vitl" in model_path:
+        model_type = "video_depth_anything_vitl"
+    else:
+        model_type = "video_depth_anything_vits"
+
+    if not os.path.exists(model_path):
+        if not os.path.exists(DJMC):
+            os.makedirs(DJMC)
+
+        model_path = os.path.join(DJMC, model_type + ".pth")
+        wget.download(model_links[model_type], model_path)
+
+    model = VideoDepthAnything(**model_configs[encoder_type], metric=metric)
+    model.load_state_dict(torch.load(model_path, map_location="cpu"), strict=True)
+    model = model.to(device).eval()
+
+    return model
+
+
+def prepare_yolo_model(model_path, **model_params):
+    device = model_params.pop("device", "cpu")
+    model = ultralytics.YOLO(check_model(model_path)).to(device)
+    return model
+
+
+def prepare_vggt_model(model_path, **model_params):
+    device = model_params.pop("device", "cpu")
+    vggt_repo_path = os.path.join(DATA_JUICER_ASSETS_CACHE, "vggt")
+    if not os.path.exists(vggt_repo_path):
+        subprocess.run(["git", "clone", "https://github.com/facebookresearch/vggt.git", vggt_repo_path], check=True)
+
+    sys.path.append(vggt_repo_path)
+
+    from vggt.models.vggt import VGGT
+
+    model = VGGT.from_pretrained(check_model_home(model_path)).to(device)
+
+    return model
+
+
+def prepare_vllm_model(pretrained_model_name_or_path, return_processor=False, **model_params):
+    """
+    Prepare and load a HuggingFace model with the corresponding processor.
+
+    :param pretrained_model_name_or_path: model name or path
+    :param return_processor: whether to return the processor instead of the tokenizer
+    :param model_params: LLM initialization parameters.
+    :return: a tuple of (model, tokenizer)
+    """
+    os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
+
+    if "device" in model_params:
+        model_params.pop("device")
+
+    if is_ray_mode():
+        tensor_parallel_size = model_params.get("tensor_parallel_size", 1)
+    else:
+        tensor_parallel_size = model_params.get("tensor_parallel_size", torch.cuda.device_count())
+    logger.info(f"Set tensor_parallel_size to {tensor_parallel_size} for vllm.")
+
+    model = vllm.LLM(model=check_model_home(pretrained_model_name_or_path), generation_config="auto", **model_params)
+    tokenizer = model.get_tokenizer()
+
+    if return_processor:
+        processor = transformers.AutoProcessor.from_pretrained(pretrained_model_name_or_path)
+        return model, processor
+    else:
+        return model, tokenizer
+
+
+def prepare_wilor_model(wilor_model_path, wilor_model_config, detector_model_path, mano_right_path, **model_params):
+    device = model_params.pop("device", "cpu")
+    wilor_DJMC_model_path = os.path.join(DJMC, "WiLoR")
+
+    if not os.path.exists(mano_right_path):
+        raise ValueError(
+            "Users need to download 'MANO_RIGHT.pkl' from https://mano.is.tue.mpg.de/ and comply with the MANO license."
+        )
+    wilor_repo_path = os.path.join(DATA_JUICER_ASSETS_CACHE, "WiLoR")
+    if not os.path.exists(wilor_repo_path):
+        subprocess.run(["git", "clone", "https://github.com/rolpotamias/WiLoR.git", wilor_repo_path], check=True)
+
+    sys.path.append(wilor_repo_path)
+    from wilor.configs import get_config
+    from wilor.models.wilor import WiLoR
+    from wilor.utils.renderer import Renderer
+
+    def _get_model_path(model_path, default_filename, download_key):
+        if not os.path.exists(model_path):
+            if not os.path.exists(DJMC):
+                os.makedirs(DJMC)
+            if not os.path.exists(wilor_DJMC_model_path):
+                os.makedirs(wilor_DJMC_model_path)
+            model_path = os.path.join(wilor_DJMC_model_path, default_filename)
+            if not os.path.exists(model_path):
+                wget.download(BACKUP_MODEL_LINKS[download_key], wilor_DJMC_model_path)
+        return model_path
+
+    wilor_model_path = _get_model_path(wilor_model_path, "wilor_final.ckpt", "wilor_model_path")
+    wilor_model_config = _get_model_path(wilor_model_config, "model_config.yaml", "wilor_model_config")
+    detector_model_path = _get_model_path(detector_model_path, "detector.pt", "wilor_detector_model_path")
+
+    model_cfg = get_config(wilor_model_config, update_cachedir=True)
+    # Override some config values, to crop bbox correctly
+    if ("vit" in model_cfg.MODEL.BACKBONE.TYPE) and ("BBOX_SHAPE" not in model_cfg.MODEL):
+
+        model_cfg.defrost()
+        assert (
+            model_cfg.MODEL.IMAGE_SIZE == 256
+        ), f"MODEL.IMAGE_SIZE ({model_cfg.MODEL.IMAGE_SIZE}) should be 256 for ViT backbone"
+        model_cfg.MODEL.BBOX_SHAPE = [192, 256]
+        model_cfg.freeze()
+
+    # Update config to be compatible with demo
+    if "PRETRAINED_WEIGHTS" in model_cfg.MODEL.BACKBONE:
+        model_cfg.defrost()
+        model_cfg.MODEL.BACKBONE.pop("PRETRAINED_WEIGHTS")
+        model_cfg.freeze()
+
+        # Update config to be compatible with demo
+    if "DATA_DIR" in model_cfg.MANO:
+        model_cfg.defrost()
+        model_cfg.MANO.DATA_DIR = os.path.join(wilor_repo_path, "mano_data/")
+        model_cfg.MANO.MODEL_PATH = mano_right_path
+        model_cfg.MANO.MEAN_PARAMS = os.path.join(wilor_repo_path, "mano_data/mano_mean_params.npz")
+        model_cfg.freeze()
+
+    model = WiLoR.load_from_checkpoint(wilor_model_path, strict=False, cfg=model_cfg)
+    detector = ultralytics.YOLO(detector_model_path)
+    renderer = Renderer(model_cfg, faces=model.mano.faces)
+    model = model.to(device)
+    detector = detector.to(device)
+
+    return model, detector, model_cfg, renderer
+
+
+def prepare_embedding_model(model_path, **model_params):
+    """
+    Prepare and load an embedding model using transformers.
+
+    :param model_path: Path to the embedding model.
+    :param model_params: Optional model parameters.
+    :return: Model with encode() returning embedding list.
+    """
+    logger.info("Loading embedding model using transformers...")
+    if "device" in model_params:
+        device = model_params.pop("device")
+    else:
+        device = "cpu"
+        logger.warning("'device' not specified in 'model_params'. Using 'cpu'.")
+    if "pooling" in model_params:
+        # pooling strategy to extract embedding from the hidden states. https://arxiv.org/abs/2503.01807
+        # None: default option, the hidden state of the last token.
+        # "mean": uniform mean of hidden states.
+        # "weighted_mean": weighted mean of hidden states. https://arxiv.org/abs/2202.08904
+        pooling = model_params.pop("pooling")
+    else:
+        pooling = None
+
+    model_path = check_model_home(model_path)
+    tokenizer = transformers.AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+    model = transformers.AutoModel.from_pretrained(model_path, trust_remote_code=True).to(device).eval()
+
+    def last_token_pool(last_hidden_states: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
+        left_padding = attention_mask[:, -1].sum() == attention_mask.shape[0]
+        mask = None
+        if pooling not in ["mean", "weighted_mean"]:
+            # return the embedding of the last token
+            if left_padding:
+                return last_hidden_states[:, -1]
+            else:
+                sequence_lengths = attention_mask.sum(dim=1) - 1
+                batch_size = last_hidden_states.shape[0]
+                return last_hidden_states[torch.arange(batch_size, device=last_hidden_states.device), sequence_lengths]
+        elif pooling == "mean":
+            mask = attention_mask
+        elif pooling == "weighted_mean":
+            if left_padding:
+                sequence_lengths = attention_mask.sum(dim=1)
+                tmp = list(range(1, attention_mask.shape[1] + 1))
+                mask = torch.tensor([tmp[seq_len:] + tmp[:seq_len] for seq_len in sequence_lengths.tolist()]).to(
+                    attention_mask.device
+                )
+            else:
+                mask = torch.arange(1, attention_mask.shape[1] + 1)
+            mask = mask * attention_mask / attention_mask.shape[1]
+        masked_hidden_states = last_hidden_states * mask.unsqueeze(-1)
+        return torch.mean(masked_hidden_states, dim=1)
+
+    def encode(text, prompt_name=None, max_len=4096):
+        if prompt_name:
+            text = f"{prompt_name}: {text}"
+
+        input_dict = tokenizer(text, padding=True, truncation=True, return_tensors="pt", max_length=max_len).to(device)
+
+        with torch.no_grad():
+            outputs = model(**input_dict)
+
+        embedding = last_token_pool(outputs.last_hidden_state, input_dict["attention_mask"])
+        embedding = nn.functional.normalize(embedding, p=2, dim=1)
+        return embedding[0].tolist()
+
+    return type("EmbeddingModel", (), {"encode": encode})()
+
+
+def update_sampling_params(
+    sampling_params,
+    pretrained_model_name_or_path,
+    enable_vllm=False,
+    fetch_generation_config_from_hf=None,
+):
+    """Update sampling_params with max_tokens/max_new_tokens from model or defaults.
+
+    For vLLM: ensures `max_tokens` is set (vLLM default 16 is too small).
+    For HF local: ensures `max_new_tokens` is set (transformers default 20 is too small).
+
+    This function should NOT be called for API models — API providers have
+    their own defaults, and injecting params like `max_new_tokens` would be
+    invalid for OpenAI-compatible endpoints.
+
+    When fetch_generation_config_from_hf is False (e.g. API-only models like
+    gemini-2.5-flash via DashScope), skip HuggingFace GenerationConfig fetch to
+    avoid connection errors. Default None means: fetch when enable_vllm or when
+    pretrained_model_name_or_path looks like an HF path (contains /).
+    """
+    if enable_vllm:
+        update_keys = {"max_tokens"}
+    else:
+        update_keys = {"max_new_tokens"}
+    generation_config_keys = {
+        "max_tokens": ["max_tokens", "max_new_tokens"],
+        "max_new_tokens": ["max_tokens", "max_new_tokens"],
+    }
+    generation_config_thresholds = {
+        "max_tokens": (max, 512),
+        "max_new_tokens": (max, 512),
+    }
+
+    if fetch_generation_config_from_hf is None:
+        fetch_generation_config_from_hf = enable_vllm or ("/" in str(pretrained_model_name_or_path))
+
+    model_generation_config = {}
+    if fetch_generation_config_from_hf:
+        pretrained_model_name_or_path = check_model_home(pretrained_model_name_or_path)
+        try:
+            model_generation_config = transformers.GenerationConfig.from_pretrained(
+                pretrained_model_name_or_path
+            ).to_dict()
+        except Exception as e:
+            logger.warning(
+                f"No generation config found for the model " f"[{pretrained_model_name_or_path}]. Error: {e}"
+            )
+
+    for key in update_keys:
+        # if there is this param in the sampling_prams, compare it with the
+        # thresholds and apply the specified updating function
+        if key in sampling_params:
+            logger.debug(f"Found param {key} in the input `sampling_params`.")
+            continue
+        # if not, try to find it in the generation_config of the model
+        found = False
+        for config_key in generation_config_keys[key]:
+            if config_key in model_generation_config and model_generation_config[config_key]:
+                sampling_params[key] = model_generation_config[config_key]
+                found = True
+                break
+        if found:
+            logger.debug(f"Found param {key} in the generation config as " f"{sampling_params[key]}.")
+            continue
+        # if not again, use the threshold directly
+        _, th = generation_config_thresholds[key]
+        sampling_params[key] = th
+        logger.debug(f"Use the threshold {th} as the sampling param {key}.")
+    return sampling_params
+
+
+class MMLabModel(object):
+    """
+    A wrapper for mmdeploy model.
+    It is used to load a mmdeploy model and run inference on given images.
+    """
+
+    def __init__(self, model_cfg_path, deploy_cfg_path, model_files, device):
+        """Initialize the MMLabModel.
+        :param model_cfg: Path to the model config.
+        :param deploy_cfg: Path to the deployment config.
+        :param model_files: Path to the model files.
+        :param device: Device to use.
+        """
+        self._install_required_packages()
+
+        self.model_cfg_path = model_cfg_path
+        self.deploy_cfg_path = deploy_cfg_path
+        self.model_files = model_files
+        self.device = device
+
+        from mmdeploy.apis.utils import build_task_processor
+        from mmdeploy.utils import get_input_shape, load_config
+
+        deploy_cfg, model_cfg = load_config(self.deploy_cfg_path, self.model_cfg_path)
+        self.task_processor = build_task_processor(model_cfg, deploy_cfg, self.device)
+
+        self.model = self.task_processor.build_backend_model(
+            self.model_files, data_preprocessor_updater=self.task_processor.update_data_preprocessor
+        )
+
+        self.input_shape = get_input_shape(deploy_cfg)
+
+    def _install_required_packages(self):
+        import importlib
+
+        try:
+            importlib.import_module("mim")
+        except ImportError:
+            logger.info("Installing openmim...")
+            try:
+                subprocess.run([sys.executable, "-m", "pip", "install", "openmim"], check=True)
+            except Exception:
+                raise ValueError(
+                    "Failed to install openmim, please refer to the documentation at "
+                    "https://github.com/open-mmlab/mim/blob/main/docs/en/installation.md for installation instructions."
+                )
+
+        # install mmcv using mim
+        try:
+            importlib.import_module("mmcv")
+        except ImportError:
+            logger.info("Installing mmcv using mim...")
+            try:
+                subprocess.run([sys.executable, "-m", "mim", "install", "mmcv==2.1.0"], check=True)
+            except Exception:
+                raise ValueError(
+                    "Failed to install mmcv, please refer to the documentation at "
+                    "https://mmcv.readthedocs.io/en/latest/get_started/installation.html# for installation instructions."
+                )
+
+        # install mmdeploy using mim
+        try:
+            importlib.import_module("mmdeploy")
+        except ImportError:
+            logger.info("Installing mmdeploy using mim...")
+            try:
+                subprocess.run([sys.executable, "-m", "mim", "install", "mmdeploy"], check=True)
+            except Exception:
+                raise ValueError(
+                    "Failed to install mmdeploy, please refer to the documentation at "
+                    "https://mmdeploy.readthedocs.io/en/latest/get_started.html#installation for installation instructions."
+                )
+
+    def __call__(self, images):
+        model_inputs, _ = self.task_processor.create_input(images, self.input_shape)
+
+        with torch.no_grad():
+            result = self.model.test_step(model_inputs)
+
+        return result
+
+
+def prepare_mmlab_model(model_cfg: str, deploy_cfg: str, model_files: List[str], device: str = "cpu"):
+    """Prepare and load a model using mmdeploy.
+
+    :param model_cfg: Path to the model config.
+    :param deploy_cfg: Path to the deployment config.
+    :param model_files: Path to the model files.
+    :param device: Device to use.
+    """
+    model = MMLabModel(
+        model_cfg,
+        deploy_cfg,
+        model_files,
+        device,
+    )
+
+    return model
+
+
+def prepare_qwen_vl_inputs_for_vllm(messages, processor):
+    text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    # qwen_vl_utils 0.0.14+ required
+    image_inputs, video_inputs, video_kwargs = qwen_vl_utils.process_vision_info(
+        messages,
+        image_patch_size=processor.image_processor.patch_size,
+        return_video_kwargs=True,
+        return_video_metadata=True,
+    )
+
+    mm_data = {}
+    if image_inputs is not None:
+        mm_data["image"] = image_inputs
+    if video_inputs is not None:
+        mm_data["video"] = video_inputs
+
+    return {"prompt": text, "multi_modal_data": mm_data, "mm_processor_kwargs": video_kwargs}
+
+
+def prepare_sam_3d_body_model(
+    checkpoint_path: str = "",
+    detector_name: str = "vitdet",
+    segmentor_name: str = "sam2",
+    fov_name: str = "moge2",
+    mhr_path: str = "",
+    detector_path: str = "",
+    segmentor_path: str = "",
+    fov_path: str = "",
+    **model_params,
+):
+    """
+    Prepare the SAM-3D-Body model.
+    :param checkpoint_path: Path to SAM 3D Body model checkpoint.
+    :param mhr_path: Path to MoHR/assets folder (or set SAM3D_mhr_path).
+    :param detector_path: Path to human detection model folder (or set SAM3D_DETECTOR_PATH).
+    :param segmentor_path: Path to human segmentation model folder (or set SAM3D_SEGMENTOR_PATH).
+    :param fov_path: Path to fov estimation model folder (or set SAM3D_FOV_PATH).
+    :param detector_name: Human detection model for demo (Default `vitdet`, add your favorite detector if needed).
+    :param segmentor_name: Human segmentation model for demo (Default `sam2`, add your favorite segmentor if needed).
+    :param fov_name: FOV estimation model for demo (Default `moge2`, add your favorite fov estimator if needed).
+    :param model_params: Additional parameters for the model.
+    """
+    sam_3d_body_repo_path = os.path.join(DATA_JUICER_ASSETS_CACHE, "sam-3d-body")
+    if not os.path.exists(sam_3d_body_repo_path):
+        subprocess.run(
+            [
+                "git",
+                "clone",
+                "https://github.com/facebookresearch/sam-3d-body.git",
+                sam_3d_body_repo_path,
+            ],
+            check=True,
+        )
+
+    def _download_model(local_dir):
+        import importlib
+
+        os.makedirs(local_dir, exist_ok=True)
+        try:
+            importlib.import_module("modelscope")
+        except ImportError:
+            logger.info("Installing modelscope...")
+            subprocess.run([sys.executable, "-m", "pip", "install", "modelscope"], check=True)
+        logger.info("Downloading model 'facebook/sam-3d-body-dinov3'...")
+        subprocess.run(
+            [
+                "modelscope",
+                "download",
+                "--model",
+                "facebook/sam-3d-body-dinov3",
+                "--local_dir",
+                local_dir,
+            ],
+            check=True,
+        )
+
+    if not checkpoint_path or not mhr_path:
+        local_dir = os.path.join(DJMC, "sam-3d-body-dinov3")
+
+        if not os.path.exists(local_dir):
+            _download_model(local_dir)
+
+        if not checkpoint_path:
+            checkpoint_path = os.path.join(local_dir, "model.ckpt")
+        if not mhr_path:
+            mhr_path = os.path.join(local_dir, "assets/mhr_model.pt")
+
+    try:
+        sys.path.insert(0, sam_3d_body_repo_path)
+        from sam_3d_body import SAM3DBodyEstimator, load_sam_3d_body
+
+        device = model_params.pop("device", "cpu")
+
+        try:
+            # Initialize sam-3d-body model and other optional modules
+            model, model_cfg = load_sam_3d_body(checkpoint_path, device=device, mhr_path=mhr_path)
+        except Exception:  # double check, local_dir exists but files broken or missing
+            _download_model(local_dir)
+            model, model_cfg = load_sam_3d_body(checkpoint_path, device=device, mhr_path=mhr_path)
+
+        human_detector, human_segmentor, fov_estimator = None, None, None
+        if detector_name:
+            module_path = f"{sam_3d_body_repo_path}/tools/build_detector.py"
+            spec = importlib.util.spec_from_file_location("build_detector", module_path)
+            if spec is None:
+                raise ImportError(f"Could not load spec from {module_path}")
+            build_detector = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(build_detector)
+            human_detector = build_detector.HumanDetector(name=detector_name, device=device, path=detector_path)
+        if segmentor_path:
+            module_path = f"{sam_3d_body_repo_path}/tools/build_sam.py"
+            spec = importlib.util.spec_from_file_location("build_sam", module_path)
+            if spec is None:
+                raise ImportError(f"Could not load spec from {module_path}")
+            build_sam = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(build_sam)
+            human_segmentor = build_sam.HumanSegmentor(name=segmentor_name, device=device, path=segmentor_path)
+        if fov_name:
+            module_path = f"{sam_3d_body_repo_path}/tools/build_fov_estimator.py"
+            spec = importlib.util.spec_from_file_location("build_fov_estimator", module_path)
+            if spec is None:
+                raise ImportError(f"Could not load spec from {module_path}")
+            build_fov_estimator = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(build_fov_estimator)
+            fov_estimator = build_fov_estimator.FOVEstimator(name=fov_name, device=device, path=fov_path)
+
+        estimator = SAM3DBodyEstimator(
+            sam_3d_body_model=model,
+            model_cfg=model_cfg,
+            human_detector=human_detector,
+            human_segmentor=human_segmentor,
+            fov_estimator=fov_estimator,
+        )
+    finally:
+        if sam_3d_body_repo_path in sys.path:
+            sys.path.remove(sam_3d_body_repo_path)
+
+    return estimator
+
+
+def prepare_SenseVoiceSmall_model(pretrained_model_name_or_path, **model_params):
+    """
+    Prepare and load light sharegpt4video.
+
+    :param model_name: input model name.
+    """
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../thirdparty/humanvbench_models"))
+    diff_file = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "../../thirdparty/humanvbench_models/SenseVoice_changes.diff")
+    )
+    repo_url = "https://github.com/FunAudioLLM/SenseVoice.git"
+
+    final_dir = os.path.join(base_dir, "SenseVoice")
+
+    if not os.path.exists(final_dir):
+        print(f"Starting direct clone from {repo_url}...")
+        try:
+            os.makedirs(base_dir, exist_ok=True)
+            subprocess.run(["git", "clone", "--depth", "1", repo_url, final_dir], check=True)
+
+            if os.path.exists(diff_file):
+                print(f"Applying patch: {diff_file}")
+                subprocess.run(["git", "-C", final_dir, "apply", diff_file], check=True)
+            else:
+                print(f"Warning: Patch file not found at {diff_file}")
+
+        except (subprocess.CalledProcessError, Exception) as e:
+            print(f"Operation failed: {e}")
+            if os.path.exists(final_dir):
+                shutil.rmtree(final_dir)
+            return
+    else:
+        print(f"Directory {final_dir} already exists.")
+
+    from thirdparty.humanvbench_models.SenseVoice.model import SenseVoiceSmall
+
+    logger.info("Loading ASR_model model...")
+    # funasr downloads from ModelScope by default (hub="ms"). Prefer Hugging
+    # Face first (faster for overseas machines), and fall back to ModelScope
+    # if the HF download fails (e.g. network blocked or model missing there).
+    try:
+        ASR_Emo_model, kwargs1 = SenseVoiceSmall.from_pretrained(model=pretrained_model_name_or_path, hub="hf")
+    except Exception as e:
+        logger.warning(
+            f"Loading SenseVoiceSmall from Hugging Face "
+            f"('{pretrained_model_name_or_path}') failed: {e}. "
+            f"Falling back to ModelScope ('iic/SenseVoiceSmall')."
+        )
+        ASR_Emo_model, kwargs1 = SenseVoiceSmall.from_pretrained(model="iic/SenseVoiceSmall", hub="ms")
+
+    ASR_Emo_model.eval()
+    return ASR_Emo_model, kwargs1
+
+
+def prepare_light_asd_model(pretrained_model_name_or_path="weight/finetuning_TalkSet.model", **model_params):
+    """
+    Prepare and load light asd model.
+
+    :param model_name: input model name.
+    """
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../thirdparty/humanvbench_models"))
+    pretrained_model_name_or_path = os.path.join(base_dir, "Light-ASD/weight/finetuning_TalkSet.model")
+
+    logger.info("Loading light_asd model...")
+    from ASD import ASD
+
+    model = ASD()
+    model.loadParameters(pretrained_model_name_or_path)
+    model.eval()
+    return model
+
+
+# import sys
+# sys.path.append("../thirdparty/humanvbench_models/Light-ASD")
+def prepare_YOLOv8_human_model(
+    pretrained_model_name_or_path="./thirdparty/humanvbench_models/YOLOv8_human/weights/best.pt", **model_params
+):
+    """
+    Prepare and load light YOLOv8_human.
+
+    :param model_name: input model name.
+    """
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../thirdparty/humanvbench_models"))
+    diff_file = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "../../thirdparty/humanvbench_models/YOLOv8_human_changes.diff")
+    )
+    repo_url = "https://github.com/jahongir7174/YOLOv8-human.git"
+
+    old_name = "YOLOv8-human"
+    new_name = "YOLOv8_human"
+
+    target_dir = os.path.join(base_dir, old_name)
+    final_dir = os.path.join(base_dir, new_name)
+
+    if not os.path.exists(final_dir):
+        print(f"Starting direct clone from {repo_url}...")
+        try:
+            os.makedirs(base_dir, exist_ok=True)
+
+            subprocess.run(["git", "clone", "--depth", "1", repo_url, target_dir], check=True)
+
+            print(f"Renaming {old_name} to {new_name}...")
+            os.rename(target_dir, final_dir)
+
+            if os.path.exists(diff_file):
+                print(f"Applying patch: {diff_file}")
+                subprocess.run(["git", "-C", final_dir, "apply", diff_file], check=True)
+                print("Setup completed successfully.")
+            else:
+                print(f"Warning: Patch file not found at {diff_file}")
+
+        except (subprocess.CalledProcessError, Exception) as e:
+            print(f"Operation failed: {e}")
+            for d in [target_dir, final_dir]:
+                if os.path.exists(d):
+                    shutil.rmtree(d)
+            print("Cleanup finished.")
+    else:
+        print(f"Directory {final_dir} already exists. Skipping setup.")
+
+    logger.info("Loading YOLOv8_human model...")
+    pretrained_model_path = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "../../thirdparty/humanvbench_models/YOLOv8_human/weights/best.pt")
+    )
+    human_detection_model = torch.load(pretrained_model_path, weights_only=False)["model"].float()
+    human_detection_model.half()
+    human_detection_model.eval()
+    return human_detection_model
+
+
+def prepare_face_detect_S3FD_model(model_path=None, **model_params):
+    """
+    Prepare and load light asd model.
+
+    :param model_name: input model name.
+    """
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../thirdparty/humanvbench_models"))
+    diff_file = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "../../thirdparty/humanvbench_models/Light-ASD_changes.diff")
+    )
+    repo_url = "https://github.com/Junhua-Liao/Light-ASD.git"
+
+    final_dir = os.path.join(base_dir, "Light-ASD")
+    model_save_dir = os.path.join(final_dir, "model/faceDetector/s3fd")
+
+    if not os.path.exists(final_dir):
+        print(f"Starting direct clone from {repo_url}...")
+        try:
+            os.makedirs(base_dir, exist_ok=True)
+            subprocess.run(["git", "clone", "--depth", "1", repo_url, final_dir], check=True)
+
+            if os.path.exists(diff_file):
+                print(f"Applying patch: {diff_file}")
+                subprocess.run(["git", "-C", final_dir, "apply", diff_file], check=True)
+            else:
+                print(f"Warning: Patch file not found at {diff_file}")
+
+        except (subprocess.CalledProcessError, Exception) as e:
+            print(f"Operation failed: {e}")
+            if os.path.exists(final_dir):
+                shutil.rmtree(final_dir)
+            return
+    else:
+        print(f"Directory {final_dir} already exists.")
+
+    def download_sfd_model(target_dir):
+        model_url = "https://huggingface.co/lithiumice/syncnet/resolve/main/sfd_face.pth"
+        mirror_model_url = "https://hf-mirror.com/lithiumice/syncnet/resolve/main/sfd_face.pth"
+
+        target_path = os.path.join(target_dir, "sfd_face.pth")
+
+        if os.path.exists(target_path):
+            print(f"Model file {target_path} already exists. Skipping download.")
+            return
+
+        print(f"Downloading sfd_face.pth to {target_dir}...")
+        os.makedirs(target_dir, exist_ok=True)
+
+        try:
+            subprocess.run(["wget", "-c", model_url, "-O", target_path], check=True)
+            print("Model download completed successfully.")
+        except subprocess.CalledProcessError:
+            try:
+                subprocess.run(["wget", "-c", mirror_model_url, "-O", target_path], check=True)
+                print("Model download completed successfully.")
+            except subprocess.CalledProcessError as e:
+                print(f"Failed to download model: {e}")
+                if os.path.exists(target_path):
+                    os.remove(target_path)
+
+    download_sfd_model(model_save_dir)
+    print("Setup and model preparation completed.")
+
+    sys.path.append(
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "../../thirdparty/humanvbench_models/Light-ASD"))
+    )
+
+    logger.info("Loading face_detect_S3FD_model model...")
+    from model.faceDetector.s3fd import S3FD
+
+    model = S3FD()
+    return model
+
+
+def prepare_wav2vec2_age_gender_model(
+    pretrained_model_name_or_path="audeering/wav2vec2-large-robust-24-ft-age-gender", **model_params
+):
+    from transformers import Wav2Vec2Processor
+    from transformers.models.wav2vec2.modeling_wav2vec2 import (
+        Wav2Vec2Model,
+        Wav2Vec2PreTrainedModel,
+    )
+
+    pretrained_model_name_or_path = check_model_home(pretrained_model_name_or_path)
+
+    class ModelHead(nn.Module):
+        r"""Classification head."""
+
+        def __init__(self, config, num_labels):
+
+            super().__init__()
+
+            self.dense = nn.Linear(config.hidden_size, config.hidden_size)
+            self.dropout = nn.Dropout(config.final_dropout)
+            self.out_proj = nn.Linear(config.hidden_size, num_labels)
+
+        def forward(self, features, **kwargs):
+
+            x = features
+            x = self.dropout(x)
+            x = self.dense(x)
+            x = torch.tanh(x)
+            x = self.dropout(x)
+            x = self.out_proj(x)
+
+            return x
+
+    class AgeGenderModel(Wav2Vec2PreTrainedModel):
+        r"""Speech emotion classifier."""
+
+        def __init__(self, config):
+
+            super().__init__(config)
+
+            self.config = config
+            self.wav2vec2 = Wav2Vec2Model(config)
+            self.age = ModelHead(config, 1)
+            self.gender = ModelHead(config, 3)
+            self.init_weights()
+
+        def forward(
+            self,
+            input_values,
+        ):
+
+            outputs = self.wav2vec2(input_values)
+            hidden_states = outputs[0]
+            hidden_states = torch.mean(hidden_states, dim=1)
+            logits_age = self.age(hidden_states)
+            logits_gender = torch.softmax(self.gender(hidden_states), dim=1)
+
+            return hidden_states, logits_age, logits_gender
+
+    processor = Wav2Vec2Processor.from_pretrained(pretrained_model_name_or_path)
+    model = AgeGenderModel.from_pretrained(pretrained_model_name_or_path, use_safetensors=False)
+    return model, processor
+
+
+MODEL_FUNCTION_MAPPING = {
+    "api": prepare_api_model,
+    "deepcalib": prepare_deepcalib_model,
+    "diffusion": prepare_diffusion_model,
+    "dwpose": prepare_dwpose_model,
+    "fasttext": prepare_fasttext_model,
+    "fastsam": prepare_fastsam_model,
+    "hawor": prepare_hawor_model,
+    "huggingface": prepare_huggingface_model,
+    "kenlm": prepare_kenlm_model,
+    "moge": prepare_moge_model,
+    "nltk": prepare_nltk_model,
+    "nltk_pos_tagger": prepare_nltk_pos_tagger,
+    "opencv_classifier": prepare_opencv_classifier,
+    "recognizeAnything": prepare_recognizeAnything_model,
+    "sdxl-prompt-to-prompt": prepare_sdxl_prompt2prompt,
+    "sentencepiece": prepare_sentencepiece_for_lang,
+    "simple_aesthetics": prepare_simple_aesthetics_model,
+    "spacy": prepare_spacy_model,
+    "vggt": prepare_vggt_model,
+    "video_blip": prepare_video_blip_model,
+    "video_depth_anything": prepare_video_depth_anything,
+    "vllm": prepare_vllm_model,
+    "wilor": prepare_wilor_model,
+    "yolo": prepare_yolo_model,
+    "embedding": prepare_embedding_model,
+    "sam_3d_body": prepare_sam_3d_body_model,
+    "mmlab": prepare_mmlab_model,
+    "Light_ASD": prepare_light_asd_model,
+    "SenseVoiceSmall": prepare_SenseVoiceSmall_model,
+    "YOLOv8_human": prepare_YOLOv8_human_model,
+    "face_detect_S3FD": prepare_face_detect_S3FD_model,
+    "wav2vec2_age_gender": prepare_wav2vec2_age_gender_model,
+}
+
+_MODELS_WITHOUT_FILE_LOCK = {
+    "fasttext",
+    "fastsam",
+    "kenlm",
+    "nltk",
+    "recognizeAnything",
+    "sentencepiece",
+    "spacy",
+    "wav2vec2_age_gender",
+}
+
+
+def prepare_model(model_type, **model_kwargs):
+    assert model_type in MODEL_FUNCTION_MAPPING.keys(), "model_type must be one of the following: {}".format(
+        list(MODEL_FUNCTION_MAPPING.keys())
+    )
+    model_func = MODEL_FUNCTION_MAPPING[model_type]
+    model_key = partial(model_func, **model_kwargs)
+    if model_type in _MODELS_WITHOUT_FILE_LOCK:
+        # initialize once in the main process to safely download model files
+        model_key()
+    return model_key
+
+
+def get_model(model_key=None, rank=None, use_cuda=False):
+    if model_key is None:
+        return None
+
+    global MODEL_ZOO
+    if model_key not in MODEL_ZOO:
+        logger.debug(f"{model_key} not found in MODEL_ZOO ({mp.current_process().name})")
+
+        # Configure thread limits in worker processes to prevent thread over-subscription
+        # when running with multiple processes (num_proc > 1)
+        if mp.current_process().name != "MainProcess":
+            from data_juicer.utils.process_utils import setup_worker_threads
+
+            setup_worker_threads(num_threads=1)
+
+        if use_cuda and cuda_device_count() > 0:
+            rank = rank if rank is not None else 0
+            rank = rank % cuda_device_count()
+            device = f"cuda:{rank}"
+        else:
+            device = "cpu"
+        MODEL_ZOO[model_key] = model_key(device=device)
+    return MODEL_ZOO[model_key]
+
+
+def free_models(clear_model_zoo=True):
+    global MODEL_ZOO
+    for model_key in MODEL_ZOO:
+        try:
+            model = MODEL_ZOO[model_key]
+            model.to("cpu")
+            if clear_model_zoo:
+                del model
+        except Exception:
+            pass
+    if clear_model_zoo:
+        MODEL_ZOO.clear()
+    torch.cuda.empty_cache()

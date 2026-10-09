@@ -1,0 +1,3 @@
+arguments:
+- --config
+- data-juicer/demos/process_simple/process.yaml

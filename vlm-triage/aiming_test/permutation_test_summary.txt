@@ -1,0 +1,4 @@
+best_kink_point: 14
+min_p_value: 1.999960000799984e-05
+n_permutations: 50000
+tested_range: 1-30

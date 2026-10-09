@@ -1,0 +1,3 @@
+#!/bin/sh
+
+export PYTHONPATH="${PYTHONPATH}:${VOYAGER_PYTHONPATH}"

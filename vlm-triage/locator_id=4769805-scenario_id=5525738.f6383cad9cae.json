@@ -1,0 +1,36 @@
+{
+  "locator_id": 4769805,
+  "scenario_id": "5525738",
+  "base_task_id": 3699942100000424,
+  "feat_task_id": 3699942300000427,
+  "diff_type": "P2F",
+  "metrics": [
+    "dpe_collision"
+  ],
+  "image_prefix": "data/visual-cr-locator-api/202604/1e76f0019822",
+  "locator_url": "http://10.190.55.60:8000/pages/crlocator.html?id=4769805",
+  "diff_url": "https://voyager.intra.xiaojukeji.com/static/management/#/simulation/review?reviewType=taskDiff&taskIds=3699942100000424,3699942300000427&selectedMetrics=dpe_collision",
+  "annotations": [
+    {
+      "cr_index": 14,
+      "cr_desc": "3700647500000008 / 3c3602fecb4ccfc71fc8b0357f29f38b37202be4",
+      "window_index": "01",
+      "window_desc": "W01 @ 4741ms",
+      "sample_index": "05",
+      "sample_desc": "S05 @ +490ms",
+      "image_url": "https://s3-nmgpu-inter.didistatic.com/te-ds-autolabeling-dos-1/luonairui/data/visual-cr-locator-api/202604/1e76f0019822/locator_id%3D4769805-scenario_id%3D5525738-cr_index%3D14-task_id%3D3700647500000008-commit%3D3c3602fecb4ccfc71fc8b0357f29f38b37202be4-window_index%3D01-window_time%3D04741-sample_index%3D05-sample_time%3D05231.jpg?response-content-disposition=inline&response-content-type=image%2Fjpeg&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKDD00000000000ZR6IP2BA7BQEHEG%2F20260415%2Fnmgpu%2Fs3%2Faws4_request&X-Amz-Date=20260415T043852Z&X-Amz-Expires=604800&X-Amz-SignedHeaders=host&X-Amz-Signature=6a5f47088fdec0cfff14739c4bd925bd568b294a7791f08184ab4a944ce80b38",
+      "diff_type": "P2P",
+      "rank": "次要"
+    },
+    {
+      "cr_index": 17,
+      "cr_desc": "3700654500000009 / c3b65d1ebcb1966929d69d1702931faa921d3166",
+      "window_index": "01",
+      "window_desc": "W01 @ 4741ms",
+      "sample_index": "05",
+      "sample_desc": "S05 @ +490ms",
+      "image_url": "https://s3-nmgpu-inter.didistatic.com/te-ds-autolabeling-dos-1/luonairui/data/visual-cr-locator-api/202604/1e76f0019822/locator_id%3D4769805-scenario_id%3D5525738-cr_index%3D17-task_id%3D3700654500000009-commit%3Dc3b65d1ebcb1966929d69d1702931faa921d3166-window_index%3D01-window_time%3D04741-sample_index%3D05-sample_time%3D05231.jpg?response-content-disposition=inline&response-content-type=image%2Fjpeg&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKDD00000000000ZR6IP2BA7BQEHEG%2F20260415%2Fnmgpu%2Fs3%2Faws4_request&X-Amz-Date=20260415T043852Z&X-Amz-Expires=604800&X-Amz-SignedHeaders=host&X-Amz-Signature=4e7f6e61acdc97c355f0de1e00cee9fbaa00b74baa8a06fb4a1dbd5995ff85d4",
+      "diff_type": "P2F"
+    }
+  ]
+}

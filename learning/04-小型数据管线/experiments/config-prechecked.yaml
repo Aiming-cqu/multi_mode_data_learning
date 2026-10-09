@@ -1,0 +1,12 @@
+# 从 data-juicer 目录运行；只读取预检合格清单。
+project_name: 'prechecked-dedup-shape'
+dataset_path: '../learning/04-小型数据管线/experiments/precheck-20261002/valid.jsonl'
+export_path: './outputs/prechecked-dedup-shape-20261002/res.jsonl'
+np: 1
+process:
+  - image_deduplicator:
+      method: phash
+      consider_text: false
+  - image_shape_filter:
+      min_width: 340
+      min_height: 1

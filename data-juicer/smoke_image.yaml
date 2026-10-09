@@ -1,0 +1,17 @@
+# Data-Juicer 最小图像冒烟配置（不依赖大模型，避开 vision 全量冲突）
+# 运行： cd data-juicer && source .venv/bin/activate && dj-process --config smoke_image.yaml
+
+project_name: 'smoke-image'
+dataset_path: './demos/data/demo-dataset-images.jsonl'
+export_path: './outputs/smoke-image/res.jsonl'
+np: 2
+
+process:
+  # 1) 形状过滤：过滤掉过小/异常的图
+  - image_shape_filter:
+      min_width: 32
+      min_height: 32
+  # 2) 模糊图识别（基于 opencv 的拉普拉斯方差）
+  - image_blur_mapper:
+  # 3) 图像去重（基于 imagededup）
+  - image_deduplicator:
